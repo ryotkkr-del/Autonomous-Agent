@@ -1,28 +1,48 @@
-# Autonomous Agent v1.1 — GitHub同期の初回設定を簡単に
+# Autonomous Agent v1.2
 
-**初回だけ** このZIP全体を展開し、`初回セットアップ.bat` をダブルクリック。Python 3.11+ と Git for Windows が必要です。初回セットアップはテストを実行してからGitHubへソースを公開し、`%USERPROFILE%\Autonomous-Agent` へcloneします。GitHubのログインやGitの名前・メール設定が求められることがあります。**公開リポジトリのため秘密情報は入れないでください。**
+Windows用のローカル自律AIエージェント。**GitHubの`main`にアプリ本体とGUIを公開済み**です。既存のv1.1以前のコード・SQLiteデータ形式を引き継いでいます。
 
-その後は `%USERPROFILE%\Autonomous-Agent\更新して起動.bat` から **GitHub最新版取得 → アプリ起動** できます。PCの電源が入っていないときに自動更新する仕組みではありません。未コミットのコード変更や履歴の分岐を検出した場合は自動上書きせず停止します。
+## セットアップ（ZIPを毎回ダウンロードする必要はありません）
 
-注意：初回セットアップでは既存のGitHub READMEを最新版のREADMEに置き換えます。`state.sqlite3*`、`workspace/`、`.env`はGitHubへのアップロード対象外です。既存のローカル保存データは手動で移行し、実行中には移行しないでください。Windows環境での実動作は未検証です。
+WindowsにPython 3.11以降、Git for Windows、Ollamaをインストールしてください。
+
+```powershell
+git clone https://github.com/ryotkkr-del/Autonomous-Agent.git
+cd Autonomous-Agent
+ollama pull gemma3:4b
+python agent.py doctor
+python gui.py
+```
+
+以後は **`更新して起動.bat`** をダブルクリックすると、GitHubの`main`をfast-forwardで取り込み、GUIを起動します。既存の作業ファイルはGitで自動上書きしません。PCがオフの間は動きません。
+
+すでにGitHubからcloneしている人は、既存のフォルダから`更新して起動.bat`で更新してください。初回用の`GitHubへアップロード.ps1`や`初回セットアップ.bat`は**現在不要**です（旧版の説明が残っている場合は使わないでください）。
+
+## v1.2の新機能
+
+- **自律的な計画見直し:** 原則8ステップごとに更新案を検討し、過去の完了タスク・成果物要件を残しつつ計画を更新。履歴をSQLiteに保存。GUIの「計画を見直す」から手動実行もできます。
+- **自動Web検索:** GUIの「自動Web検索を許可」、または`python agent.py allow-search 1`でジョブごとに有効化。Bing RSSを利用する読み取り専用検索で、検索先へのクエリ送信を伴います。検索結果から外部ページは自動訪問しません。URL本文を読むには別途明示的な許可が必要です。検索サービスの仕様やアクセス制限により動作しない場合があります。
+- **自律コーディング強化:** `search_code`でファイル内検索、`replace_in_file`で一意な一致箇所のみ部分置換。ファイルのバックアップ、静的検査、許可制のテスト、修正履歴を利用します。任意のシェル実行や無制限の依存インストールには対応していません。
+
+## コマンド例
+
+```powershell
+python agent.py new "Pythonの学習ツールを作りテストで改善する"
+python agent.py allow-search 1
+python agent.py run 1 --steps 8
+python agent.py replan 1
+python agent.py tasks 1
+```
+
+## 制限と安全性
+
+本体は無料ローカル推論を利用します。Codexは明示的な許可による手動実行のみで、ChatGPT Plus利用枠の対象です。PythonテストはOSレベルのサンドボックスではなく、ユーザー権限で動くため信頼済みコードに限って許可してください。Windows実機でのOllama・Codex連携は未検証。Linux上で64件の単体テストが成功しています。
+
+ユーザーのジョブデータ（`workspace/`、`state.sqlite3*`）と秘密情報はGitHubへアップロードしません。
 
 ---
 
-# GitHub同期のセットアップ（初回だけ）
-
-対象: https://github.com/ryotkkr-del/Autonomous-Agent
-
-1. **Git for Windows** をインストールします。
-2. 初回はこのZIPを展開し、`GitHubへアップロード.ps1` を PowerShell で実行します（右クリックしてPowerShellで実行、または `powershell -NoProfile -ExecutionPolicy Bypass -File .\GitHubへアップロード.ps1`）。GitHub認証とGitのコミット名・メールの設定が必要な場合があります。既存READMEと`.gitignore`の変更があるため上書きされますが、他のリポジトリファイルは削除しません。
-3. `初回GitHub同期.ps1` を実行します。`%USERPROFILE%\Autonomous-Agent` に clone します。既に同名のフォルダがある場合は停止して、そのフォルダを保護します。
-4. 以降はcloneしたフォルダの **`更新して起動.bat`** をダブルクリックすれば、GitHubの`main`を安全なfast-forwardで取得し、その後GUIを起動します。
-
-* ソースコードの変更履歴はGitHubで管理されます。`state.sqlite3*`、`workspace/`、`.env`などのローカルデータはGitHubにアップロードされません。
-* 同期は自動的な強制上書きではありません。ローカルコードに変更がある場合、またはGitの履歴が分岐した場合は停止します。アプリ稼働中の更新は避けてください。
-* `更新して起動.bat` は**起動時に更新**するものです。閉じたPCでも自動同期する仕組みではありません。
-* 初回のアップロード時は、リポジトリのREADMEが最新版で置き換わります。重要なREADME内容がある場合は事前に退避してください。
-
----
+## 以前の開発履歴・詳細仕様
 
 # Autonomous Agent v1.0 — 状況が分かるWindows GUI
 
@@ -271,27 +291,3 @@ python -m unittest discover -s tests -v
 ```
 
 Linux/Python環境で40件の単体テストが成功。実機WindowsのOllama・Codex・タスクスケジューラや実サイトアクセスは未検証。外部Web検索、ブラウザ自動操作、自由なOS操作、任意リポジトリ全体の編集、本格的なサンドボックス・完全自動での自己修復は未実装です。
-
----
-
-## v1.2: 自律的な計画変更・Web検索・コード編集
-
-v1.1のジョブ、SQLite履歴、Windows GUI、既存の安全設定を維持しています。
-
-- **計画の自律更新:** 実行中8ステップごとにOllamaで計画を再評価。過去の完了タスクと既存の成果物リストを維持し、新しい計画を`plan_revisions`テーブルに記録します。GUIの「計画を見直す」か `python agent.py replan 1` で手動でも実行できます。AIの提案は必ず正しいとは限りません。
-- **自動Web検索:** `python agent.py allow-search 1` でジョブごとに許可すると、AIが`web_search`操作からBing RSSで検索できます。検索クエリはBingに送信され、取得結果はすべて信頼できないデータとして扱います。検索結果のURLは自動訪問しません。本文を読む場合は引き続きURLごとの`approve-url`が必要です。検索プロバイダの応答・アクセス制限により利用できない場合があります。
-- **自律コーディング強化:** `search_code`でプロジェクト内のコードを調べ、`replace_in_file`で一致箇所1件だけを置き換えます。既存のバックアップ・Python構文検査・許可制テスト・修正実験ログ・Codexへの手動引き継ぎは引き続き利用できます。任意のシェル操作は認めていません。
-- **安全性:** テスト実行はOSサンドボックスではありません。自動検索は読み取り専用で、外部サイトの指示には従いません。自動の課金、依存インストール、デプロイは行いません。
-
-### 使い方
-
-```powershell
-python agent.py doctor
-python agent.py new "Pythonの学習用コードを作り、テストして改善する"
-python agent.py allow-search 1
-python agent.py run 1 --steps 8
-python agent.py replan 1
-python agent.py tasks 1
-```
-
-**注意:** このZIPはv1.2の完全なローカルプロジェクトです。GitHub本体のコードがまだ登録されていない場合、GitHubでの`git pull`だけでこのバージョンには更新できません。初回はコードを一度リポジトリへ登録する必要があります。
