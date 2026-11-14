@@ -592,7 +592,7 @@ def review(goal,plan,history,model):
         idx=test_runs[-1]
         if not history[idx].get('result','').startswith('TEST PASS'):
             return False,'最新のテストが失敗しています。ログを確認して修正してください'
-        if any(e.get('action') in ('write_file','codex') for e in history[idx+1:]):
+        if any(e.get('action') in ('write_file','replace_in_file','codex') for e in history[idx+1:]):
             return False,'テスト合格後にファイル変更があったため再テストが必要です'
     evidence=artifact_evidence(plan['deliverables'])
     if any(e.get('size')==0 or e.get('error') for e in evidence):
@@ -755,6 +755,14 @@ def run(job_id,model,budget=8,codex=False):
                       # A deterministic test gate: do not rely on the model choosing run_tests.
                       # Only run executable tests after explicit per-job opt-in.
                       all_history=history(db,job_id,MAX_JOB_STEPS)
+                      # A job that explicitly enabled tests must not finish Python code
+                      # without any test cases. Ask the agent to create tests instead.
+                      if allow_tests and any(str(p).lower().endswith('.py') for p in plan['deliverables']) and not tests_exist():
+                          record(db,job_id,{'action':'review_failed','path':'','content':'',
+                              'reason':'No tests found under workspace/tests'},
+                              'REVIEW FAILED: Python成果物に対するテストがありません。tests/test*.py を作成してください')
+                          print('Review failed: Python tests are missing',flush=True)
+                          continue
                       if allow_tests and tests_exist():
                           current_hash=workspace_fingerprint()
                           last_tests=[e for e in all_history if e['action']=='auto_tests']
@@ -939,7 +947,7 @@ def doctor():
     except Exception: print('Ollama: not reachable')
 
 def main():
-    parser=argparse.ArgumentParser(description='Autonomous Agent v1.2 — replan, web search and code edits')
+    parser=argparse.ArgumentParser(description='Autonomous Agent v1.3 — replan, web search and code edits')
     sub=parser.add_subparsers(dest='command',required=True)
     n=sub.add_parser('new');n.add_argument('goal')
     r=sub.add_parser('run');r.add_argument('job_id',type=int);r.add_argument('--steps',type=int,default=8)
