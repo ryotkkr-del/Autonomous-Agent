@@ -52,9 +52,9 @@ class InterfaceSafetyTests(unittest.TestCase):
             agent.safety_summary(999)
 
     def test_gui_has_matching_commands_without_starting_them(self):
-        self.assertTrue(callable(gui.AgentGUI.set_success_criteria))
-        self.assertTrue(callable(gui.AgentGUI.view_success_criteria))
-        self.assertTrue(callable(gui.AgentGUI.view_safety))
+        self.assertTrue(callable(gui.DesktopApp.set_success_criteria))
+        self.assertTrue(callable(gui.DesktopApp.view_success_criteria))
+        self.assertTrue(callable(gui.DesktopApp.view_safety))
 
 
 if __name__=='__main__':
