@@ -520,4 +520,6 @@ python benchmarks/compare_ollama.py benchmark-results/before.json benchmark-resu
 
 **評価の注意点:** Pythonシナリオは関数名・引数・構文と副作用の少ないコード構造を**静的に検査するのみ**で、計算結果の正しさを証明しません。教材の内容品質や文章の正確さも完全には採点できません。ベンチマークの`passed`は実用的な信頼性や安全性を保証しません。同じモデルでも推論時の確率性、PC負荷、プロンプト変更で結果が変わります。比較は同じシナリオ・ステップ数・試行回数を使ってください。
 
+**GUIから実行:** 「実AIの性能を評価（Ollama）」ボタンでモデル名・試行回数・ステップ数を選べます。実測完了後は `benchmark-results/real-ollama.json` に記録されます。**課題の不正解も測定データとして正常終了**し、結果JSONの `passed` と `failure_category` を確認してください。Ollama接続失敗はエラー扱いです。
+
 **テストと実測の区別:** GitHub Actionsはコードの動作を模擬した回帰テストと隔離テストのみ実施します。GitHub Actionsで`gemma3:4b`の推論実測を行ったわけではなく、実測はOllamaがインストールされたPCで実行して初めて結果が出ます。
