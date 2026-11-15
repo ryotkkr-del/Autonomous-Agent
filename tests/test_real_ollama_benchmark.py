@@ -83,8 +83,8 @@ class RealBenchmarkTests(unittest.TestCase):
 
     def test_model_check_rejects_remote_endpoint_without_network(self):
         with patch.object(agent, "OLLAMA_URL", "https://remote.example/api/chat"), \
-             patch.object(real.urllib.request, "urlopen", side_effect=AssertionError("no remote requests")):
-            with self.assertRaisesRegex(RuntimeError, "localhost"):
+             patch.object(real.urllib.request, "build_opener", side_effect=AssertionError("no remote requests")):
+            with self.assertRaisesRegex(RuntimeError, "local"):
                 real.check_model("gemma3:4b")
 
     def test_preflight_rejects_missing_model(self):
@@ -95,7 +95,9 @@ class RealBenchmarkTests(unittest.TestCase):
                 return False
             def read(self, limit):
                 return b'{"models":[{"name":"other:latest"}]}'
-        with patch.object(real.urllib.request, "urlopen", return_value=Response()):
+        class Opener:
+            def open(self,*args,**kwargs): return Response()
+        with patch.object(real.urllib.request, "build_opener", return_value=Opener()):
             with self.assertRaisesRegex(RuntimeError, "not installed"):
                 real.check_model("gemma3:4b")
 
