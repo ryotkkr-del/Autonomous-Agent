@@ -106,7 +106,17 @@ def connection():
     db.execute('''CREATE TABLE IF NOT EXISTS job_controls (
        job_id INTEGER PRIMARY KEY, criteria TEXT NOT NULL DEFAULT '{}',
        stall_recoveries INTEGER NOT NULL DEFAULT 0,
-       failures INTEGER NOT NULL DEFAULT 0, retry_after TEXT NOT NULL DEFAULT '')''')
+       failures INTEGER NOT NULL DEFAULT 0, retry_after TEXT NOT NULL DEFAULT '',
+       approval_required INTEGER NOT NULL DEFAULT 0)''')
+    cols={r['name'] for r in db.execute('PRAGMA table_info(job_controls)')}
+    if 'approval_required' not in cols:
+        db.execute('ALTER TABLE job_controls ADD COLUMN approval_required INTEGER NOT NULL DEFAULT 0')
+    db.execute('''CREATE TABLE IF NOT EXISTS pending_changes (
+       id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL,
+       path TEXT NOT NULL, content TEXT NOT NULL, expected_sha TEXT NOT NULL,
+       original_action TEXT NOT NULL, reason TEXT NOT NULL,
+       state TEXT NOT NULL DEFAULT 'pending', created TEXT NOT NULL)''')
+    db.execute('CREATE INDEX IF NOT EXISTS pending_by_job ON pending_changes(job_id,state,id)')
     try: yield db; db.commit()
     finally: db.close()
 
@@ -742,11 +752,13 @@ def clear_run_failure(db,job_id):
     db.commit()
 
 
-def make_job(goal):
+def make_job(goal, require_approval=False):
     with connection() as db:
         c=db.execute('INSERT INTO jobs(goal,status,created,updated) VALUES(?,?,?,?)',(goal,'paused',now(),now()))
         job_id=c.lastrowid
         db.execute('UPDATE jobs SET workspace_rel=? WHERE id=?',(f'jobs/{job_id}',job_id))
+        if require_approval:
+            db.execute('INSERT INTO job_controls(job_id,approval_required) VALUES(?,1)',(job_id,))
     return job_id
 
 @contextmanager
@@ -1130,7 +1142,7 @@ def main():
     prep.add_argument('--confirm',action='store_true',help='explicitly approve downloading the official Python image from Docker Hub')
     sub.add_parser('status');sub.add_parser('doctor');sub.add_parser('stop');sub.add_parser('clear-stop')
     a=parser.parse_args();ensure_workspace()
-    if a.command=='new': print('Created job #',make_job(a.goal))
+    if a.command=='new': print('Created job #',make_job(a.goal,require_approval=True))
     elif a.command=='run': run(a.job_id,a.model,a.steps,a.codex)
     elif a.command=='codex': codex_job(a.job_id,a.confirm)
     elif a.command=='allow-tests': set_tests(a.job_id,True)
