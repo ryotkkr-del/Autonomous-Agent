@@ -229,6 +229,7 @@ class DesktopApp:
         ttk.Button(checks,text='成功条件を見る',command=self.view_success_criteria).pack(side='left',padx=(0,7))
         ttk.Button(checks,text='PCへの影響・権限を確認',command=self.view_safety).pack(side='left',padx=(0,7))
         ttk.Button(checks,text='変更案を確認・承認',command=self.review_pending_change).pack(side='left',padx=(0,7))
+        ttk.Button(checks,text='変更を元に戻す',command=self.review_rollback).pack(side='left',padx=(0,7))
         ttk.Button(checks,text='旧ジョブの保護を有効化',command=self.protect_legacy_job).pack(side='left')
         opts = ttk.Frame(outer); opts.pack(fill='x', pady=(3, 9))
         self.testbox=ttk.Checkbutton(opts,text='Pythonテスト実行を許可（注意）',variable=self.tests_enabled,command=self.change_tests)
@@ -535,12 +536,73 @@ class DesktopApp:
             if not items:
                 messagebox.showinfo('変更の承認','保留中の変更はありません。');return
             change_id=items[0]['id']
+            ids=[int(item['id']) for item in items]
         except (ValueError,KeyError,IndexError,TypeError):
             messagebox.showerror('読み取りエラー','変更一覧を読み取れませんでした。');return
         # Delay command until after the current worker is fully released.
+        if len(ids)>1:
+            self.root.after(100,lambda:self.launch(
+                ['batch-preview',str(job_id),*[str(i) for i in ids]],
+                '一括変更の差分を確認',
+                on_success=lambda o:self._show_batch(job_id,ids,o)))
+        else:
+            self.root.after(100,lambda:self.launch(
+                ['change-preview',str(job_id),str(change_id)],
+                '変更内容を表示',on_success=lambda o:self._show_change(job_id,change_id,o)))
+
+    def _show_batch(self,job_id,ids,output):
+        try:
+            result=json.loads(output)
+            changes=result['changes']
+            if result['truncated'] or len(changes)!=len(ids):
+                messagebox.showwarning('一括承認できません','差分が省略されたか一覧が一致しません。CLIで確認してください。')
+                return
+            display='\\n'.join('=== '+change['path']+' ===\\n'+change['diff'] for change in changes)
+        except (ValueError,KeyError,TypeError):
+            messagebox.showerror('差分エラー','一括差分を確認できませんでした。');return
+        window=tk.Toplevel(self.root)
+        window.title('一括承認 — '+str(len(ids))+'ファイル')
+        window.geometry('900x640')
+        ttk.Label(window,text=str(len(ids))+'ファイルの変更内容を全件確認してください。').pack(padx=12,pady=10)
+        view=tk.Text(window,wrap='none',font=('Consolas',10))
+        view.insert('1.0',display)
+        view.configure(state='disabled')
+        view.pack(fill='both',expand=True,padx=12)
+        bar=ttk.Frame(window);bar.pack(pady=12)
+        def approve():
+            if not messagebox.askyesno('一括反映しますか？',
+                str(len(ids))+'ファイルを反映します。途中の通常エラーでは復旧を試みますが、停電などでは完全な原子性を保証できません。'):
+                return
+            window.destroy()
+            self.root.after(100,lambda:self.launch(
+                ['approve-batch',str(job_id),*[str(i) for i in ids]],'一括変更の承認'))
+        ttk.Button(bar,text='すべて承認して反映',command=approve).pack(side='left',padx=10)
+        ttk.Button(bar,text='閉じる（変更しない）',command=window.destroy).pack(side='left',padx=10)
+
+    def review_rollback(self):
+        job_id=self._current_job()
+        if job_id is None:return
+        self.launch(['snapshots',str(job_id)],'変更前の履歴を取得',
+                    on_success=lambda output:self._choose_rollback(job_id,output))
+
+    def _choose_rollback(self,job_id,output):
+        try:
+            snapshots=[s for s in json.loads(output) if s['state']=='applied']
+            if not snapshots:
+                messagebox.showinfo('ロールバック','元に戻せる変更がありません。');return
+            choices='\\n'.join(str(s['id'])+' : '+s['path'] for s in snapshots[:15])
+        except (ValueError,TypeError,KeyError):
+            messagebox.showerror('エラー','履歴を読み取れません。');return
+        number=simpledialog.askinteger('変更を元に戻す',
+            '戻すスナップショットIDを入力してください。\\n'+choices,parent=self.root)
+        if number is None:return
+        if not any(x['id']==number for x in snapshots):
+            messagebox.showwarning('IDを確認','一覧にない番号は選べません。');return
+        if not messagebox.askyesno('復元の最終確認',
+            'この変更の直前のファイル内容を復元します。現在の内容が承認後から変わっていた場合は拒否します。'):
+            return
         self.root.after(100,lambda:self.launch(
-            ['change-preview',str(job_id),str(change_id)],
-            '変更内容を表示',on_success=lambda o:self._show_change(job_id,change_id,o)))
+            ['rollback',str(job_id),str(number)],'ファイル変更を復元'))
 
     def _show_change(self,job_id,change_id,output):
         try:
