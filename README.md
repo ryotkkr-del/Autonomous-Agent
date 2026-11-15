@@ -1,4 +1,4 @@
-# Autonomous Agent v1.9
+# Autonomous Agent v2.0
 
 Windows用のローカル自律AIエージェント。**GitHubの`main`にアプリ本体とGUIを公開済み**です。既存のv1.1以前のコード・SQLiteデータ形式を引き継いでいます。
 
@@ -426,3 +426,30 @@ python agent.py safety 1
 - セキュリティ回帰テストを追加。危険な例に対して実際に拒否することを確認。
 
 これらは**一部の具体的な脆弱性を低減する対策**であり、安全性の全面保証ではありません。特にエージェント本体・Codex CLI・WebアクセスはDocker内部に隔離されません。
+
+## v2.0 — AI編集の人間レビュー・承認ゲート
+
+新しいCLI/GUIジョブでは、AIが `write_file` または `replace_in_file` を提案した時点で**実際のファイルを書き換えず**、SQLiteに変更案を保存して `awaiting_approval` で停止します。変更はファイル差分を確認した人が承認した場合に限り反映されます。却下時は書き込みません。既存のジョブ・データは維持します。
+
+**GUI:** ジョブを選択 →「変更案を確認・承認」→ 差分を確認 → 「承認して反映」または「却下する」。変更反映後に「開始 / 再開」で続きを実行します。古いジョブには「旧ジョブの保護を有効化」を使用してください。
+
+**CLI:**
+```powershell
+python agent.py new "学習ノートを作る"
+python agent.py run 1 --steps 8
+python agent.py pending 1
+python agent.py change-preview 1 CHANGE_ID
+python agent.py approve-change 1 CHANGE_ID
+# または python agent.py reject-change 1 CHANGE_ID
+python agent.py run 1 --steps 8
+
+# 以前から存在するジョブにも承認ゲートを適用
+python agent.py protect-job OLD_JOB_ID
+python agent.py safety OLD_JOB_ID
+```
+
+新規CLI/GUIジョブの承認制は有効で始まります。直接Python APIで以前どおり`make_job(goal)`したジョブや旧バージョンからのジョブには互換性のため従来設定が残るため、`protect-job`で明示的に保護してください。いったん保護したジョブをCLIから無効化する機能は提供しません。
+
+**重要な安全上の区別:** これはAIによる「ファイル編集の提案」と「ホストへの変更の反映」を切り分ける承認方式であり、**エージェント本体をDocker内に移してはいません**。AIのPythonテスト実行は従来のDocker隔離を維持します。保護ジョブでは、承認ゲートを迂回するCodexの直接実行とAIのGitチェックポイント作成を禁止しています。作業フォルダへのホスト側の書き込みは承認時のみ発生します。ユーザー自身が編集する場合は通常のWindowsファイル操作として動作します。
+
+変更提案後にファイル内容が変化すると承認は拒否されます。一般ユーザー権限の同一PC上で悪意ある別プロセスが動く場合の全競合を防ぐものではありません。OS全体のアクセス権制御、シェル操作、Codexを包括的に隔離する機能はまだありません。
