@@ -990,6 +990,17 @@ def approve_batch(job_id,change_ids):
                 return 'Approved '+str(len(rows))+' file changes'
 
 
+def batch_preview(job_id,change_ids):
+    ids=list(change_ids)
+    if not ids or len(ids)>20 or len(ids)!=len(set(ids)):
+        raise ValueError('batch requires 1-20 distinct edits')
+    previews=[change_preview(job_id,cid) for cid in ids]
+    paths=[p['path'] for p in previews]
+    if len(set(paths))!=len(paths): raise ValueError('duplicate paths in batch')
+    return {'job_id':job_id,'ids':ids,'changes':previews,
+            'truncated':any(p['truncated'] for p in previews)}
+
+
 def resolve_change(job_id,change_id,approve=False):
     """Apply only after explicit approval; stale revisions fail closed."""
     with single_runner():
@@ -1415,6 +1426,7 @@ def main():
     for command in ('change-preview','approve-change','reject-change'):
         p=sub.add_parser(command);p.add_argument('job_id',type=int);p.add_argument('change_id',type=int)
     p=sub.add_parser('approve-batch');p.add_argument('job_id',type=int);p.add_argument('change_ids',type=int,nargs='+')
+    p=sub.add_parser('batch-preview');p.add_argument('job_id',type=int);p.add_argument('change_ids',type=int,nargs='+')
     p=sub.add_parser('snapshots');p.add_argument('job_id',type=int)
     p=sub.add_parser('rollback');p.add_argument('job_id',type=int);p.add_argument('snapshot_id',type=int)
     r=sub.add_parser('run');r.add_argument('job_id',type=int);r.add_argument('--steps',type=int,default=8)
@@ -1447,6 +1459,7 @@ def main():
     elif a.command=='approve-change': print(resolve_change(a.job_id,a.change_id,approve=True))
     elif a.command=='reject-change': print(resolve_change(a.job_id,a.change_id,approve=False))
     elif a.command=='approve-batch': print(approve_batch(a.job_id,a.change_ids))
+    elif a.command=='batch-preview': print(json.dumps(batch_preview(a.job_id,a.change_ids),ensure_ascii=False,indent=2))
     elif a.command=='snapshots': print(json.dumps(list_snapshots(a.job_id),ensure_ascii=False,indent=2))
     elif a.command=='rollback': print(rollback_snapshot(a.job_id,a.snapshot_id))
     elif a.command=='codex': codex_job(a.job_id,a.confirm)
