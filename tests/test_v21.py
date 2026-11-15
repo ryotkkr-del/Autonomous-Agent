@@ -31,6 +31,24 @@ class ReviewSafetyTests(unittest.TestCase):
             agent.update_status(db,self.job,'awaiting_approval','pending')
         return number
 
+    def test_gui_review_and_rollback_methods_exist(self):
+        import gui
+        for method in ('_show_batch','review_rollback','_choose_rollback'):
+            self.assertTrue(callable(getattr(gui.DesktopApp,method)))
+
+    def test_batch_preview_includes_every_file(self):
+        a=self.stage('one.md','one')
+        with agent.connection() as db:
+            job=db.execute('SELECT * FROM jobs WHERE id=?',(self.job,)).fetchone()
+            with agent.job_workspace(job):
+                b=agent.stage_change(db,self.job,{
+                    'action':'write_file','path':'two.md','content':'two','reason':'test'})
+        preview=agent.batch_preview(self.job,[a,b])
+        self.assertEqual(len(preview['changes']),2)
+        self.assertFalse(preview['truncated'])
+        self.assertIn('+one',preview['changes'][0]['diff'])
+        self.assertIn('+two',preview['changes'][1]['diff'])
+
     def test_new_file_rollback_removes_file(self):
         cid=self.stage('new.md','hello')
         agent.resolve_change(self.job,cid,approve=True)
