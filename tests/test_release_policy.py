@@ -127,6 +127,16 @@ class ReleasePolicyTests(unittest.TestCase):
         self.assertIn("if ($Launch)", source)
         self.assertIn("mainの自動取得・更新は停止中", source)
 
+    def test_developer_update_backups_before_any_git_fetch(self):
+        source = (PROJECT / "sync.ps1").read_text(encoding="utf-8-sig")
+        block = source.split("if ($DevMain) {", 1)[1]
+        backup = block.index("& python -I $backupScript create --revision $localSha")
+        fetch = block.index("fetch origin main --prune")
+        self.assertLess(backup, fetch)
+        self.assertIn("if ($LASTEXITCODE -ne 0)", block[backup:fetch])
+        self.assertIn("バックアップ作成・検証が失敗", block[backup:fetch])
+        self.assertIn("safety_backup.py", block[:backup])
+
     @unittest.skipUnless(os.name == "nt", "Windows PowerShell-only safe-launch check")
     def test_powershell_safe_default_does_not_fetch_or_launch(self):
         proc = subprocess.run(
