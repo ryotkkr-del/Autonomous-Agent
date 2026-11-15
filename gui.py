@@ -102,6 +102,7 @@ def describe_status(job):
         'paused':'開始・再開で作業を進められます。',
         'running':'AIが作業中です。',
         'blocked':'問題を確認してから再開してください。',
+        'awaiting_approval':'AIの変更案を確認して承認・却下してください。',
     }.get(status, '状態を確認してください。'))
 
 
@@ -288,7 +289,7 @@ class DesktopApp:
         prev=selected if selected is not None else self.selected_id
         self.jobs={str(r['id']):r for r in rows}
         for item in self.tree.get_children():self.tree.delete(item)
-        translations={'paused':'一時停止','running':'実行中','done':'完了','blocked':'要確認'}
+        translations={'paused':'一時停止','running':'実行中','done':'完了','blocked':'要確認','awaiting_approval':'変更の承認待ち'}
         for r in rows:
             self.tree.insert('','end',iid=str(r['id']),values=(r['id'],translations.get(r['status'],r['status']),r['steps'],r['goal'][:140]))
         if prev is not None and str(prev) in self.jobs:
@@ -483,6 +484,8 @@ class DesktopApp:
             'このアプリはWindowsのカーネルやドライバーを操作しません。\\n'
             'Pythonテストの実行にはDockerが必須で、'
             'ネットワーク遮断・読み取り専用マウント・権限制限を適用します。\\n'
+            '新規ジョブのAI編集は承認が必要です。旧ジョブには保護設定が必要です。'
+            'CodexとGitの自動書き込みは保護対象ジョブで無効化します。'
             'コンテナを突破する脆弱性やDocker自体の危険は残ります。'
             '隔離が必要ならWindows Sandboxまたは仮想マシンを利用してください。')
 
