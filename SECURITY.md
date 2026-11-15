@@ -95,3 +95,5 @@ CIではLinux/Windows × Python 3.11/3.13のユニットテスト、Linux Docker
 - Generated Python tests remain Docker-only, and proposed edits remain subject to the existing approval gate.
 
 Remaining risk: this is not a full OS sandbox. Races involving other local processes, Windows reparse points, credentials embedded inside ordinary source files, and bugs in the OS, TLS or Docker runtime are still possible. Use a standard user account, avoid sensitive files, and keep independent backups.
+
+Git command hardening: Git status now requires explicit `allow_git`; protected jobs deny Git status and checkpoints. Git subprocess invocations disable `core.fsmonitor`, external diff and credential helpers. These are reductions in attack surface rather than guarantees for a malicious Git installation or repository.
