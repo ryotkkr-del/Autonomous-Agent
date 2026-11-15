@@ -28,15 +28,9 @@ class Version12Tests(unittest.TestCase):
 
     def test_search_rss_bounded_and_untrusted(self):
         payload=b'<rss><channel><item><title>Docs</title><link>https://example.org/doc</link><description>Useful reference</description></item></channel></rss>'
-        class Response:
-            status=200
-            def __enter__(self): return self
-            def __exit__(self,*args):pass
-            def read(self,n): return payload
-        class Opener:
-            def open(self,*args,**kwargs):return Response()
-        with patch.object(agent,'validate_public_https'),patch.object(agent.urllib.request,'build_opener',return_value=Opener()):
+        with patch.object(agent,'_fetch_public_https',return_value=(200,{},payload)) as fetch:
             result=agent.web_search('learning python',True)
+            self.assertIn('https://www.bing.com/search',fetch.call_args.args[0])
         self.assertIn('UNTRUSTED',result)
         self.assertIn('https://example.org/doc',result)
 
