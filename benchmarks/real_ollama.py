@@ -333,7 +333,9 @@ def main(argv=None):
     path.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"Results: {result['summary']['passed']}/{result['summary']['total']} "
           f"({result['summary']['success_rate']:.0%}); file={path}")
-    return 0 if result["summary"]["passed"] == result["summary"]["total"] else 1
+    # Failing a benchmark task is measured data, not a CLI execution failure.
+    # Keep nonzero return codes for configuration/preflight errors only.
+    return 0
 
 
 if __name__ == "__main__":
