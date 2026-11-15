@@ -27,7 +27,7 @@ class InterfaceSafetyTests(unittest.TestCase):
         self.assertFalse(s['permissions']['web_search'])
         self.assertFalse(s['permissions']['local_git_checkpoint'])
         self.assertEqual(s['permissions']['approved_web_pages'],0)
-        self.assertTrue(any('NOT an OS sandbox' in x for x in s['risks']))
+        self.assertTrue(any('Docker Linux-container isolation' in x for x in s['risks']))
 
     def test_safety_summary_reflects_permissions(self):
         agent.set_search(self.job,True)
