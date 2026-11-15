@@ -24,6 +24,9 @@ import sys
 import tempfile
 import uuid
 
+# Python -I intentionally omits the script directory from import search paths.
+# This is the only trusted application module directory that should be added.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import agent
 
 MAX_FILES = 5000
