@@ -252,6 +252,9 @@ class DesktopApp:
         ttk.Button(bottom,text='Docker環境を診断',command=self.check_sandbox).pack(side='left',padx=(0,8))
         ttk.Button(bottom,text='Pythonイメージを準備',command=self.prepare_sandbox).pack(side='left',padx=(0,8))
         ttk.Button(bottom,text='Docker公式サイト',command=lambda:webbrowser.open('https://www.docker.com/products/docker-desktop/')).pack(side='left')
+        evalrow=ttk.Frame(outer);evalrow.pack(fill='x',pady=(3,0))
+        ttk.Button(evalrow,text='実AIの性能を評価（Ollama）',command=self.start_real_benchmark).pack(side='left',padx=(0,9))
+        ttk.Label(evalrow,text='テスト専用環境で実行・生成コードは実行しません').pack(side='left')
 
     def _refresh_periodic(self):
         # External scheduled runs can update SQLite independently of this GUI.
@@ -516,6 +519,31 @@ class DesktopApp:
             return
         self.launch(['sandbox-prepare','--confirm'],'Dockerイメージの準備',
                     on_success=lambda _: self.check_sandbox())
+
+    def start_real_benchmark(self):
+        """Opt-in real model evaluation; no scheduled or unattended invocation."""
+        model=simpledialog.askstring('実Ollama評価',
+             '評価するOllamaモデル名を入力してください。モデルは事前にダウンロードしておきます。',
+             initialvalue='gemma3:4b',parent=self.root)
+        if model is None:return
+        model=model.strip()
+        if not model or len(model)>100 or any(ch.isspace() for ch in model):
+            messagebox.showwarning('モデル名','空白を含まないモデル名を入力してください。');return
+        trials=simpledialog.askinteger('試行回数','各シナリオの実行回数（1〜5）',
+              initialvalue=1,minvalue=1,maxvalue=5,parent=self.root)
+        if trials is None:return
+        steps=simpledialog.askinteger('最大ステップ','各ジョブの最大ステップ数（1〜50）',
+              initialvalue=14,minvalue=1,maxvalue=50,parent=self.root)
+        if steps is None:return
+        if not messagebox.askyesno('実AI評価を開始',
+            '3シナリオ × '+str(trials)+'回を、ローカルOllamaで実際に推論させます。'
+            '専用の一時ワークスペースを使い、Web検索、Git、生成コードの実行、変更の自動承認は行いません。'
+            '推論は長時間かかる場合があります。開始しますか？'):
+            return
+        self.launch(['benchmark-real','--model',model,'--trials',str(trials),'--steps',str(steps)],
+                    'Ollama実AIベンチマーク',
+                    on_success=lambda _:messagebox.showinfo('評価完了',
+                        '結果を benchmark-results/real-ollama.json に保存しました。'))
 
     def enable_virtual_draft(self):
         job_id=self._current_job()
