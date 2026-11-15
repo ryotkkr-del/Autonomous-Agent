@@ -37,7 +37,9 @@ def read_trust(path: Path, repository_root: Path) -> tuple[str, ...]:
     """Do not accept an attacker-editable trust root inside a Git checkout."""
     path = path.absolute()
     root = repository_root.resolve(strict=True)
-    if path.is_relative_to(root) or path.is_symlink() or not path.is_file():
+    # Resolve parent symlinks too: a trust path outside the checkout must
+    # not point back at an attacker-controlled tracked file through a link.
+    if path.is_symlink() or not path.is_file() or path.resolve(strict=True).is_relative_to(root):
         raise ValueError("independent release trust file missing or unsafe")
     if path.stat().st_size > 4096:
         raise ValueError("release trust file exceeds maximum size")
