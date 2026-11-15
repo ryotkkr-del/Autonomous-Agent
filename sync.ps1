@@ -75,35 +75,7 @@ if ($DevMain) {
         Fail 'バックアッププログラムがありません。開発版更新を拒否しました。'
     }
     $localSha = (& git -c core.fsmonitor=false rev-parse HEAD).Trim()
-    if ($LASTEXITCODE -ne 0 -or $localSha -notmatch '^[a-fA-F0-9]{40,64}
-    if ($localSha -ne $remoteSha) {
-        & git -c core.fsmonitor=false merge-base --is-ancestor HEAD origin/main
-        if ($LASTEXITCODE -ne 0) {
-            Fail '履歴が分岐しているか、mainが過去のコミットに戻っています。更新拒否。'
-        }
-        & git -c core.fsmonitor=false -c core.hooksPath=NUL merge --ff-only origin/main
-        if ($LASTEXITCODE -ne 0) {
-            Fail ('開発版更新に失敗しました。更新前のコミット: ' + $localSha)
-        }
-        Write-Host ('開発版を更新しました。更新前: ' + $localSha) -ForegroundColor Yellow
-    } else {
-        Write-Host '開発版mainに変更はありません。'
-    }
-} else {
-    Write-Host '安全起動: mainの自動取得・更新は停止中です。' -ForegroundColor Yellow
-    Write-Host '正式な署名付きRelease更新が完成するまで、インストール済みコードを起動します。'
-    Write-Host '開発版を更新する場合は「開発版を更新して起動.bat」を使ってください。'
-}
-if ($Launch) {
-    $launcher = Join-Path $PSScriptRoot 'start.ps1'
-    $main = Join-Path $PSScriptRoot 'gui.py'
-    if (-not (Test-Path -LiteralPath $launcher) -or -not (Test-Path -LiteralPath $main)) {
-        Fail 'ローカルアプリ本体が見つかりません。起動しません。'
-    }
-    & $launcher
-    if ($LASTEXITCODE -ne 0) { Fail 'アプリの起動に失敗しました。' }
-}
-) {
+    if ($LASTEXITCODE -ne 0 -or $localSha -notmatch '^[a-fA-F0-9]{40,64}$') {
         Fail '更新前コミットを検証できません。更新中止。'
     }
     Write-Host '更新前にSQLiteと作業ファイルの検証付きバックアップを作成します。'
