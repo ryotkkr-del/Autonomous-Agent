@@ -86,3 +86,12 @@ CIではLinux/Windows × Python 3.11/3.13のユニットテスト、Linux Docker
 ## v2.5 — 実験の安全境界
 
 追加指示は人間が選んだUTF-8テキストから明示的な実行許可を得て読み込む。実験用の判断プロンプトにのみ付加し、本番プロンプトやソースには適用しない。通常ジョブ、Git履歴、テスト実行権限は変更しない。既存結果を上書きせず、実験ごとに固有フォルダへ保存する。評価中にAI生成コードを実行しない。採用判断は人間が行う。
+
+## v2.6 Security audit
+
+- HTTPS fetches verify public DNS answers and pin the inspected numeric address while retaining hostname-based TLS certificate checks. Redirects and proxy use are disabled.
+- Ollama requests and model preflight are restricted to local HTTP connections without automatic redirects or proxying. Localhost is normalized to loopback.
+- Agent-controlled workspace paths now reject hidden files, credential-like names, Windows reserved device names, trailing spaces/dots, and hard-linked files.
+- Generated Python tests remain Docker-only, and proposed edits remain subject to the existing approval gate.
+
+Remaining risk: this is not a full OS sandbox. Races involving other local processes, Windows reparse points, credentials embedded inside ordinary source files, and bugs in the OS, TLS or Docker runtime are still possible. Use a standard user account, avoid sensitive files, and keep independent backups.
