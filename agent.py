@@ -815,8 +815,11 @@ def stage_change(db,job_id,a):
         content=a['content']
     if not isinstance(content,str) or len(content.encode('utf-8'))>MAX_FILE_BYTES:
         raise ValueError('proposed edit too large')
-    existing=db.execute("SELECT id FROM pending_changes WHERE job_id=? AND state='pending'",(job_id,)).fetchone()
-    if existing: raise ValueError('another edit is already awaiting approval')
+    existing=db.execute("SELECT id FROM pending_changes WHERE job_id=? AND path=? AND state='pending'",
+                        (job_id,filename)).fetchone()
+    if existing: raise ValueError('this file already has an edit awaiting approval')
+    queued=db.execute("SELECT COUNT(*) FROM pending_changes WHERE job_id=? AND state='pending'",(job_id,)).fetchone()[0]
+    if queued>=20: raise ValueError('too many pending edits')
     c=db.execute("""INSERT INTO pending_changes(job_id,path,content,expected_sha,original_action,reason,state,created)
              VALUES(?,?,?,?,?,?,'pending',?)""",
              (job_id,filename,content,before,op,a.get('reason','')[:1000],now()))
