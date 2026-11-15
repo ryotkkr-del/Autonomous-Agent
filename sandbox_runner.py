@@ -26,6 +26,22 @@ def availability():
     if not cli:
         return False, "Docker CLI not found. Install/start Docker Desktop (Linux containers)."
     try:
+        # Refuse TCP/SSH Docker daemons: mounts must be on this computer.
+        if os.environ.get("DOCKER_HOST","").strip().startswith(("tcp://","ssh://","http://","https://")):
+            return False, "Remote Docker hosts are not supported."
+        context = subprocess.run(
+            [cli, "context", "inspect", "--format", "{{.Endpoints.docker.Host}}"],
+            capture_output=True, text=True, timeout=8, check=False,
+        )
+        endpoint=context.stdout.strip()
+        if context.returncode != 0 or not endpoint.startswith(("unix://","npipe://")):
+            return False, "Only local Docker sockets/named pipes are supported."
+        system = subprocess.run(
+            [cli, "info", "--format", "{{.OSType}}"],
+            capture_output=True, text=True, timeout=8, check=False,
+        )
+        if system.returncode != 0 or system.stdout.strip().lower()!="linux":
+            return False, "Docker must be running Linux containers."
         version = subprocess.run(
             [cli, "version", "--format", "{{.Server.Version}}"],
             capture_output=True, text=True, timeout=8, check=False,
