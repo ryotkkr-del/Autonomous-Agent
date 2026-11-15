@@ -26,6 +26,7 @@ class DesktopHelpersTest(unittest.TestCase):
                 db.execute('CREATE TABLE jobs (id INTEGER, goal TEXT, status TEXT, steps INTEGER, result TEXT, allow_tests INTEGER, allow_git INTEGER, workspace_rel TEXT, updated TEXT)')
                 db.execute('INSERT INTO jobs VALUES (1, ?, ?, 0, ?, 0, 0, ?, ?)',('目標','paused','','jobs/1','today'))
             finally:
+                db.commit()
                 db.close()
             rows=load_jobs(file)
             self.assertEqual(rows[0]['goal'],'目標')
