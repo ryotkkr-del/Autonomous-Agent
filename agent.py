@@ -686,12 +686,13 @@ def safety_summary(job_id=None):
         'job_id':job_id,
         'sandbox':{'backend':'Docker Linux containers','available':docker_ready,'detail':docker_reason},
         'permissions':{
+            'file_edit_approval':bool(row and db is not None) if False else False,
             'python_tests':bool(row['allow_tests']) if row else False,
             'local_git_checkpoint':bool(row['allow_git']) if row else False,
             'web_search':bool(prefs['allow_search']) if prefs else False,
             'approved_web_pages':approved,
         },
-        'scope':'workspace-only text actions; no arbitrary shell or PC control tools',
+        'scope':'New CLI/GUI jobs stage edits for approval; legacy jobs may need protect-job. Docker protects test execution only.',
         'risks':[
             'Python tests require Docker Linux-container isolation; no Docker means no execution.',
             'Sandbox restricts networking and host workspace writes, but container escapes and Docker-daemon compromise remain residual risks.',
@@ -981,6 +982,11 @@ def run(job_id,model,budget=8,codex=False):
         job=db.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
         if not job: raise ValueError('job not found')
         if job['status']=='done': print('Already completed:',job['result']); return
+        if job['status']=='awaiting_approval':
+            print('A file edit is awaiting human approval. Use pending / change-preview / approve-change.'); return
+        if db.execute("SELECT id FROM pending_changes WHERE job_id=? AND state='pending'",(job_id,)).fetchone():
+            update_status(db,job_id,'awaiting_approval','pending human file review')
+            print('Pending edit must be reviewed before resuming.');return
         if job['status']=='blocked': print('Job is blocked; inspect history then run: python agent.py unblock',job_id); return
         if job['steps']>=MAX_JOB_STEPS: print('Hard step limit reached'); return
         goal=job['goal']; allow_tests=bool(job['allow_tests']); allow_git=bool(job['allow_git']); prefs=db.execute('SELECT allow_search FROM agent_preferences WHERE job_id=?',(job_id,)).fetchone(); allow_search=bool(prefs['allow_search']) if prefs else False; approved_urls={r['url'] for r in db.execute('SELECT url FROM approved_urls WHERE job_id=?',(job_id,))}; update_status(db,job_id,'running','')
@@ -1059,9 +1065,25 @@ def run(job_id,model,budget=8,codex=False):
                       a={'action':'review_failed','path':'','content':'','reason':reason}
                       result='REVIEW FAILED: '+reason
                   else:
-                      before_fp=workspace_fingerprint() if a['action'] in ('write_file','replace_in_file') else None
-                      try: result=execute(a,allow_tests=allow_tests,allow_git=allow_git,approved_urls=approved_urls,allow_search=allow_search)
-                      except (OSError,UnicodeError,ValueError) as exc: result='ERROR: '+str(exc)
+                      if approval_enabled(db,job_id) and a['action'] in ('write_file','replace_in_file'):
+                          try:
+                              proposal_id=stage_change(db,job_id,a)
+                          except (OSError,UnicodeError,ValueError,TypeError) as exc:
+                              result='ERROR: could not stage edit: '+str(exc)[:300]
+                          else:
+                              record(db,job_id,a,'PENDING APPROVAL #'+str(proposal_id))
+                              update_status(db,job_id,'awaiting_approval',
+                                            'human review required for edit #'+str(proposal_id))
+                              print('Edit staged #',proposal_id,'for',a['path'],flush=True)
+                              return
+                      before_fp=workspace_fingerprint() if a['action'] in ('write_file','replace_in_file') and not (approval_enabled(db,job_id)) else None
+                      if approval_enabled(db,job_id) and a['action'] in ('write_file','replace_in_file'):
+                          # On failure the action must never fall through into a
+                          # direct host write.
+                          result=result
+                      else:
+                          try: result=execute(a,allow_tests=allow_tests,allow_git=allow_git,approved_urls=approved_urls,allow_search=allow_search)
+                          except (OSError,UnicodeError,ValueError) as exc: result='ERROR: '+str(exc)
                       if before_fp is not None and result.startswith('WROTE'):
                           register_repair(db,job_id,a,before_fp,workspace_fingerprint())
                       if a['action']=='run_tests':
@@ -1234,6 +1256,10 @@ def main():
     parser=argparse.ArgumentParser(description='Autonomous Agent v1.4 — acceptance checks and bounded recovery')
     sub=parser.add_subparsers(dest='command',required=True)
     n=sub.add_parser('new');n.add_argument('goal')
+    for command in ('protect-job','pending'):
+        p=sub.add_parser(command);p.add_argument('job_id',type=int)
+    for command in ('change-preview','approve-change','reject-change'):
+        p=sub.add_parser(command);p.add_argument('job_id',type=int);p.add_argument('change_id',type=int)
     r=sub.add_parser('run');r.add_argument('job_id',type=int);r.add_argument('--steps',type=int,default=8)
     r.add_argument('--model',default=MODEL);r.add_argument('--codex',action='store_true',help='show Codex hint; never runs automatically')
     c=sub.add_parser('codex');c.add_argument('job_id',type=int);c.add_argument('--confirm',action='store_true')
@@ -1258,6 +1284,11 @@ def main():
     a=parser.parse_args();ensure_workspace()
     if a.command=='new': print('Created job #',make_job(a.goal,require_approval=True))
     elif a.command=='run': run(a.job_id,a.model,a.steps,a.codex)
+    elif a.command=='protect-job': protect_job(a.job_id)
+    elif a.command=='pending': print(json.dumps(pending_changes(a.job_id),ensure_ascii=False,indent=2))
+    elif a.command=='change-preview': print(json.dumps(change_preview(a.job_id,a.change_id),ensure_ascii=False,indent=2))
+    elif a.command=='approve-change': print(resolve_change(a.job_id,a.change_id,approve=True))
+    elif a.command=='reject-change': print(resolve_change(a.job_id,a.change_id,approve=False))
     elif a.command=='codex': codex_job(a.job_id,a.confirm)
     elif a.command=='allow-tests': set_tests(a.job_id,True)
     elif a.command=='deny-tests': set_tests(a.job_id,False)
