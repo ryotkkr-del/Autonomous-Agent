@@ -110,6 +110,26 @@ class SecurityBoundaryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'loopback'):
                 agent._validate_local_ollama_url('http://localhost:11434/api/chat')
 
+    def test_git_status_needs_permission_and_is_never_run_in_protected_draft(self):
+        operation={'action':'git_status','path':'','content':'','reason':'inspect'}
+        with patch.object(agent,'git_status',side_effect=AssertionError('Git must not execute')):
+            self.assertIn('disabled',agent.execute(operation))
+            jobid=agent.make_job('protected draft',require_approval=True,draft_mode=True)
+            with agent.connection() as db:
+                job=db.execute('SELECT * FROM jobs WHERE id=?',(jobid,)).fetchone()
+                with agent.job_workspace(job):
+                    self.assertIn('unavailable',agent.draft_action(db,jobid,operation))
+
+    def test_git_cli_explicitly_disables_fsmonitor(self):
+        with patch.object(agent.shutil,'which',return_value='git'), \
+             patch.object(agent.subprocess,'run',return_value=MagicMock(returncode=0,stdout='',stderr='')) as invoked:
+            rc,out=agent.git_command(['status','--short'])
+        self.assertEqual(rc,0)
+        argv=invoked.call_args.args[0]
+        self.assertIn('core.fsmonitor=false',argv)
+        self.assertIn('diff.external=',argv)
+        self.assertIn('credential.helper=',argv)
+
     def test_ollama_uses_explicit_no_proxy_and_redirect_handler(self):
         payload=json.dumps({'message':{'content':'{"tasks":[]}'}}).encode()
         response=MagicMock()
