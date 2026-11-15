@@ -353,15 +353,13 @@ def web_search(query, allowed=False):
     if not isinstance(query, str) or not (2 <= len(query.strip()) <= 180) or any(ord(c)<32 for c in query):
         return 'ERROR: invalid search query'
     url='https://www.bing.com/search?format=rss&q='+urllib.parse.quote(query.strip())
-    # Same bounded, nonredirecting HTTPS mechanism used for the approved-page reader.
-    validate_public_https(url)
-    req=urllib.request.Request(url,headers={'User-Agent':'Mozilla/5.0 (compatible; AutonomousAgent/1.2)','Accept':'application/rss+xml,application/xml,text/xml'})
-    opener=urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+    # Resolve once and pin the TLS connection to the inspected numeric IP.
     try:
-        with opener.open(req,timeout=12) as response:
-            if response.status!=200: return f'ERROR: search service HTTP {response.status}'
-            data=response.read(40001)
-            if len(data)>40000: return 'ERROR: search response too large'
+        status,headers,data=_fetch_public_https(
+            url,{'User-Agent':'Mozilla/5.0 (compatible; AutonomousAgent/1.2)',
+                 'Accept':'application/rss+xml,application/xml,text/xml'},40000)
+        if status!=200: return f'ERROR: search service HTTP {status} (redirects refused)'
+        if len(data)>40000: return 'ERROR: search response too large'
         root=ET.fromstring(data)
         results=[]
         for item in root.findall('./channel/item')[:MAX_SEARCH_RESULTS]:
@@ -508,14 +506,31 @@ def execute(action, allow_tests=False, allow_git=False, approved_urls=(), allow_
     if op=='finish': return 'FINISH_REQUESTED: '+action['reason'][:800]
     raise ValueError('unsupported operation')
 
+def _validate_local_ollama_url(url):
+    """Never send user goals or workspace content to remote model endpoints."""
+    parts=urllib.parse.urlsplit(url)
+    if (parts.scheme!='http' or parts.hostname not in ('127.0.0.1','::1','localhost')
+            or parts.path!='/api/chat' or parts.query or parts.fragment
+            or parts.username or parts.password or parts.port is None or parts.port<=0):
+        raise ValueError('Ollama endpoint must be a local HTTP /api/chat service')
+    # localhost can be changed in a hosts file; require every address to loop back.
+    if parts.hostname=='localhost':
+        addresses=socket.getaddrinfo('localhost',parts.port,type=socket.SOCK_STREAM)
+        if not addresses or any(not ipaddress.ip_address(item[4][0]).is_loopback for item in addresses):
+            raise ValueError('localhost must resolve only to loopback addresses')
+    return url
+
+
 def ollama(messages, schema, model):
+    endpoint=_validate_local_ollama_url(OLLAMA_URL)
     body={'model':model,'stream':False,'format':schema,'options':{'temperature':0.1},'messages':messages}
-    req=urllib.request.Request(OLLAMA_URL,data=json.dumps(body,ensure_ascii=False).encode(),
+    req=urllib.request.Request(endpoint,data=json.dumps(body,ensure_ascii=False).encode(),
                               headers={'Content-Type':'application/json'},method='POST')
+    opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())
     try:
-        with urllib.request.urlopen(req, timeout=150) as resp: result=json.loads(resp.read(600_000))
-    except (OSError,urllib.error.URLError,TimeoutError) as e:
-        raise RuntimeError('Ollama unreachable; launch Ollama and pull the selected model') from e
+        with opener.open(req, timeout=150) as resp: result=json.loads(resp.read(600_000))
+    except (OSError,urllib.error.URLError,TimeoutError,ValueError) as e:
+        raise RuntimeError('Local Ollama unavailable or returned an invalid response') from e
     raw=result.get('message',{}).get('content','')
     parsed=json.loads(raw)
     if not isinstance(parsed,dict): raise ValueError('Ollama response must be a JSON object')
