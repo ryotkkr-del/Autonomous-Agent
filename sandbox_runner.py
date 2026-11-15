@@ -21,8 +21,8 @@ MAX_OUTPUT = 12000
 CONTAINER_PREFIX = "autonomous-agent-test-"
 
 
-def availability():
-    """No auto-install, daemon start or image download."""
+def availability(require_image=True):
+    """Check local Docker Linux engine; never install, start or download."""
     cli = shutil.which("docker")
     if not cli:
         return False, "Docker CLI not found. Install/start Docker Desktop (Linux containers)."
@@ -49,15 +49,63 @@ def availability():
         )
         if version.returncode != 0 or not version.stdout.strip():
             return False, "Docker daemon is unavailable. Start Docker Desktop."
-        image = subprocess.run(
-            [cli, "image", "inspect", IMAGE],
-            capture_output=True, text=True, timeout=8, check=False,
-        )
-        if image.returncode != 0:
-            return False, f"Image not present. Run manually: docker pull {IMAGE}"
-        return True, "Docker daemon ready and required Python image present."
+        if require_image:
+            image = subprocess.run(
+                [cli, "image", "inspect", IMAGE],
+                capture_output=True, text=True, timeout=8, check=False,
+            )
+            if image.returncode != 0:
+                return False, f"Image not present. Run manually: docker pull {IMAGE}"
+        return True, "Docker Linux engine is ready" + (" and required Python image is present." if require_image else ".")
     except (OSError, subprocess.TimeoutExpired) as exc:
         return False, f"Docker preflight failed: {type(exc).__name__}"
+
+
+
+def setup_diagnosis():
+    """Return a structured, readable report for GUI and CLI setup."""
+    ready, detail=availability()
+    if ready:
+        return {'ready':True,'stage':'ready','message':'Dockerの隔離実行環境を利用できます。',
+                'detail':detail,'next_step':'Pythonテストを実行できます。'}
+    if "CLI not found" in detail:
+        stage="missing_cli"
+        advice="Docker Desktopを公式サイトからインストールしてください。アプリが勝手にインストールすることはありません。"
+    elif "Image not present" in detail:
+        stage="missing_image"
+        advice="「Pythonイメージを準備」を押すか、docker pull python:3.11-slim を実行してください。"
+    elif "Linux containers" in detail:
+        stage="wrong_container_mode"
+        advice="Docker Desktopの設定をLinuxコンテナに変更してから再診断してください。"
+    elif "Remote Docker" in detail or "local Docker sockets" in detail:
+        stage="remote_daemon"
+        advice="ローカルのDocker Desktopコンテキストに変更してください。外部サーバーには接続しません。"
+    else:
+        stage="daemon_unavailable"
+        advice="Docker Desktopを起動し、WSL 2と仮想化が利用できるか確認してください。"
+    return {'ready':False,'stage':stage,'message':'隔離環境はまだ利用できません。',
+            'detail':detail,'next_step':advice}
+
+
+def prepare_image(confirmed=False):
+    """User-initiated Docker Hub download, never unattended and never host execution."""
+    if not confirmed:
+        return "ERROR: user confirmation is required to download the Python image."
+    ready, detail=availability(require_image=False)
+    if not ready:
+        return "ERROR: Docker setup is incomplete: "+detail
+    cli=shutil.which("docker")
+    try:
+        result=subprocess.run([cli,"pull",IMAGE],capture_output=True,text=True,
+                              timeout=300,check=False,errors="replace")
+    except (OSError,subprocess.TimeoutExpired) as exc:
+        return "ERROR: image download failed: "+str(exc)[:300]
+    if result.returncode!=0:
+        return "ERROR: Docker image pull failed: "+(result.stderr or result.stdout)[-900:]
+    ready,detail=availability()
+    if not ready:
+        return "ERROR: image download finished but verification failed: "+detail
+    return "Docker image ready: "+IMAGE
 
 
 def command(workspace, container_name):
