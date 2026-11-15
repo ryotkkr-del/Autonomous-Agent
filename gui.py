@@ -70,7 +70,7 @@ def extract_job_id(output):
 
 
 
-STATUS_NAMES = {'paused':'一時停止中', 'running':'実行中', 'done':'完了', 'blocked':'要確認'}
+STATUS_NAMES = {'paused':'一時停止中', 'running':'実行中', 'done':'完了', 'blocked':'要確認', 'awaiting_approval':'変更の承認待ち'}
 REASON_NAMES = {
     'step budget reached':'今回の作業回数が上限に達しました。続けるには「開始 / 再開」を押してください。',
     'STOP file detected':'停止ボタンによって一時停止しました。',
