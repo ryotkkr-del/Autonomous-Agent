@@ -71,9 +71,13 @@ def scenario_code():
     goal = "Create a Python function and a passing test"
     plan = {"tasks": ["create module", "add test", "verify"], "deliverables": ["mathutil.py"]}
     test_source = ("import unittest\n"
+                   "from pathlib import Path\n"
                    "class T(unittest.TestCase):\n"
                    "    def test_double(self):\n"
-                   "        self.assertEqual(2*3, 6)\n")
+                   "        src = (Path(__file__).resolve().parents[1] / 'mathutil.py').read_text(encoding='utf-8')\n"
+                   "        scope = {}\n"
+                   "        exec(compile(src, 'mathutil.py', 'exec'), scope)\n"
+                   "        self.assertEqual(scope['double'](3), 6)\n")
     steps = iter([
         action("write_file", "mathutil.py", "def double(x):\n    return x * 2\n"),
         action("write_file", "tests/test_mathutil.py", test_source),
