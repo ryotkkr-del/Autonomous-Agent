@@ -140,6 +140,20 @@ class ApprovalTests(unittest.TestCase):
             agent.run(self.job,'unused',budget=1)
         self.assertFalse((self.folder/'.git').exists())
 
+    def test_upgrade_protects_existing_job_once_without_erasing_state(self):
+        with agent.connection() as db:
+            db.execute('UPDATE job_controls SET approval_required=0 WHERE job_id=?',(self.job,))
+            db.execute("DELETE FROM security_migrations WHERE name='approval_v2'")
+            db.execute('UPDATE jobs SET result=? WHERE id=?',('old result preserved',self.job))
+        with agent.connection() as db:
+            self.assertTrue(agent.approval_enabled(db,self.job))
+            self.assertEqual(db.execute('SELECT result FROM jobs WHERE id=?',(self.job,)).fetchone()['result'],
+                             'old result preserved')
+            db.execute('UPDATE job_controls SET approval_required=0 WHERE job_id=?',(self.job,))
+        # Migration is one time only; the marker prevents re-running.
+        with agent.connection() as db:
+            self.assertFalse(agent.approval_enabled(db,self.job))
+
     def test_gui_has_review_actions(self):
         self.assertTrue(callable(gui.DesktopApp.review_pending_change))
         self.assertTrue(callable(gui.DesktopApp._show_change))
