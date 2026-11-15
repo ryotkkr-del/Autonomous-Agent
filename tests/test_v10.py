@@ -21,12 +21,15 @@ class UsabilityTests(unittest.TestCase):
     def test_readonly_details(self):
         with tempfile.TemporaryDirectory() as d:
             dbpath=Path(d)/'jobs.sqlite3'
-            with sqlite3.connect(dbpath) as db:
+            db = sqlite3.connect(dbpath)
+            try:
                 db.execute('CREATE TABLE events (id INTEGER PRIMARY KEY,job_id INTEGER,action TEXT)')
                 db.execute('CREATE TABLE plan_tasks (job_id INTEGER,state TEXT)')
                 db.execute("INSERT INTO events(job_id,action) VALUES(4, ?)",('write_file',))
                 db.execute("INSERT INTO plan_tasks VALUES(4,'done')")
                 db.execute("INSERT INTO plan_tasks VALUES(4,'todo')")
+            finally:
+                db.close()
             r=read_job_details(4,dbpath)
             self.assertEqual((r['task_total'],r['task_done']),(2,1))
             self.assertIn('編集',r['last_action'])
