@@ -397,7 +397,8 @@ def git_command(args):
         return None,'ERROR: invalid .git directory'
     hooks=ROOT/'.disabled-git-hooks'
     hooks.mkdir(exist_ok=True)
-    cmd=[exe,'-c',f'core.hooksPath={hooks}','-c','credential.helper=',*args]
+    cmd=[exe,'-c',f'core.hooksPath={hooks}','-c','credential.helper=',
+         '-c','core.fsmonitor=false','-c','diff.external=',*args]
     try:
         result=subprocess.run(cmd,cwd=WORKSPACE,env={**os.environ,'GIT_TERMINAL_PROMPT':'0'},
             capture_output=True,text=True,timeout=MAX_GIT_SECONDS,check=False)
@@ -501,7 +502,9 @@ def execute(action, allow_tests=False, allow_git=False, approved_urls=(), allow_
     if op=='check_python': return check_python(action['path'])
     if op=='run_tests': return run_workspace_tests(allow_tests)
     if op=='read_url': return read_approved_url(action['path'],approved_urls)
-    if op=='git_status': return git_status()
+    if op=='git_status':
+        if not allow_git: return 'ERROR: Git status disabled; enable explicitly using allow-git JOB_ID'
+        return git_status()
     if op=='git_checkpoint': return git_snapshot(allow_git)
     if op=='finish': return 'FINISH_REQUESTED: '+action['reason'][:800]
     raise ValueError('unsupported operation')
@@ -999,8 +1002,8 @@ def draft_action(db,job_id,a,allow_tests=False,approved_urls=(),allow_search=Fal
                 return sandbox_runner.run_tests(stage)
         except (OSError,ValueError) as exc:
             return 'ERROR: draft test preparation failed: '+str(exc)[:300]
-    if op=='git_checkpoint':
-        return 'ERROR: Git checkpoint unavailable in virtual draft'
+    if op in ('git_checkpoint','git_status'):
+        return 'ERROR: Git commands are unavailable in protected virtual drafts'
     return execute(a,allow_tests=False,allow_git=False,approved_urls=approved_urls,allow_search=allow_search)
 
 
@@ -1486,8 +1489,8 @@ def run(job_id,model,budget=8,codex=False):
                           pass
                       else:
                           try:
-                              if approval_enabled(db,job_id) and a['action']=='git_checkpoint':
-                                  result='ERROR: Git checkpoint is disabled for protected jobs; review edits before any Git history'
+                              if approval_enabled(db,job_id) and a['action'] in ('git_checkpoint','git_status'):
+                                  result='ERROR: Git commands are disabled for protected jobs'
                               else:
                                   result=execute(a,allow_tests=allow_tests,allow_git=allow_git,approved_urls=approved_urls,allow_search=allow_search)
                           except (OSError,UnicodeError,ValueError) as exc: result='ERROR: '+str(exc)
@@ -1663,7 +1666,7 @@ def doctor():
     except Exception: print('Ollama: not reachable')
 
 def main():
-    parser=argparse.ArgumentParser(description='Autonomous Agent v2.5 — opt-in controlled Ollama experiments')
+    parser=argparse.ArgumentParser(description='Autonomous Agent v2.6 — hardened network, workspace and Git controls')
     sub=parser.add_subparsers(dest='command',required=True)
     n=sub.add_parser('new');n.add_argument('goal')
     for command in ('protect-job','pending'):
