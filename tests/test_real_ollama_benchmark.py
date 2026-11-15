@@ -108,6 +108,20 @@ class RealBenchmarkTests(unittest.TestCase):
             self.assertEqual(code, 2)
             self.assertFalse(target.exists())
 
+    def test_cli_dispatch_and_gui_entrypoint(self):
+        import gui
+        self.assertTrue(callable(gui.DesktopApp.start_real_benchmark))
+        import benchmarks.real_ollama as cli_real
+        with patch.object(sys, "argv", ["agent.py", "benchmark-real",
+                                       "--model", "gemma3:4b", "--steps", "3", "--trials", "2",
+                                       "--scenarios", "note,json"]), \
+             patch.object(cli_real, "main", return_value=0) as invoked:
+            with self.assertRaises(SystemExit) as done:
+                agent.main()
+        self.assertEqual(done.exception.code, 0)
+        invoked.assert_called_once_with(["--model", "gemma3:4b", "--steps", "3",
+                                         "--trials", "2", "--scenarios", "note,json"])
+
     def test_fixture_output_isolated_from_user_workspace(self):
         before = agent.ROOT, agent.WORKSPACE, agent.DB
         with real.isolated_agent():
