@@ -117,6 +117,15 @@ def connection():
        original_action TEXT NOT NULL, reason TEXT NOT NULL,
        state TEXT NOT NULL DEFAULT 'pending', created TEXT NOT NULL)''')
     db.execute('CREATE INDEX IF NOT EXISTS pending_by_job ON pending_changes(job_id,state,id)')
+    # Existing installations are hardened once on upgrade. Fresh databases
+    # have no jobs at this point; direct library callers may still opt out
+    # explicitly when creating jobs for controlled test fixtures.
+    db.execute('CREATE TABLE IF NOT EXISTS security_migrations (name TEXT PRIMARY KEY)')
+    migration=db.execute("SELECT name FROM security_migrations WHERE name='approval_v2'").fetchone()
+    if not migration:
+        db.execute('INSERT OR IGNORE INTO job_controls(job_id,approval_required) SELECT id,1 FROM jobs')
+        db.execute('UPDATE job_controls SET approval_required=1 WHERE job_id IN (SELECT id FROM jobs)')
+        db.execute("INSERT INTO security_migrations(name) VALUES('approval_v2')")
     try: yield db; db.commit()
     finally: db.close()
 
@@ -693,14 +702,14 @@ def safety_summary(job_id=None):
             'web_search':bool(prefs['allow_search']) if prefs else False,
             'approved_web_pages':approved,
         },
-        'scope':'New CLI/GUI jobs stage edits for approval; legacy jobs may need protect-job. Docker protects test execution only.',
+        'scope':'New jobs and automatically migrated legacy jobs stage edits for approval. Docker protects test execution only.',
         'risks':[
             'Python tests require Docker Linux-container isolation; no Docker means no execution.',
             'Sandbox restricts networking and host workspace writes, but container escapes and Docker-daemon compromise remain residual risks.',
             'Git checkpoints refuse common secret-like filenames but cannot detect embedded credentials in normal files; no automatic remote push.',
             'Web search sends query text to Bing; approved URL requests send traffic to external websites.',
             'Automatic scheduled runs require manual opt-in and run while your PC/account is available.',
-            'New jobs require explicit approval for AI file writes; older jobs must enable protect-job to get the same guarantee.',
+            'New CLI/GUI jobs and legacy jobs upgraded into v2.0 require explicit approval for AI file writes.',
             'Protected jobs disable AI Git checkpoints and Codex direct execution; these operations are not inside the Docker test sandbox.',
             'The model can still make mistakes in plans and external search requests.',
         ],
@@ -763,7 +772,7 @@ def approval_enabled(db,job_id):
 
 
 def protect_job(job_id):
-    """One-way protection; existing jobs must opt in explicitly."""
+    """One-way protection for direct library-created unprotected jobs."""
     with connection() as db:
         job=db.execute('SELECT id FROM jobs WHERE id=?',(job_id,)).fetchone()
         if not job: raise ValueError('unknown job')
