@@ -21,9 +21,12 @@ class DesktopHelpersTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             file=Path(d)/'state.sqlite3'
             self.assertEqual(load_jobs(file),[])
-            with sqlite3.connect(file) as db:
+            db = sqlite3.connect(file)
+            try:
                 db.execute('CREATE TABLE jobs (id INTEGER, goal TEXT, status TEXT, steps INTEGER, result TEXT, allow_tests INTEGER, allow_git INTEGER, workspace_rel TEXT, updated TEXT)')
                 db.execute('INSERT INTO jobs VALUES (1, ?, ?, 0, ?, 0, 0, ?, ?)',('目標','paused','','jobs/1','today'))
+            finally:
+                db.close()
             rows=load_jobs(file)
             self.assertEqual(rows[0]['goal'],'目標')
             self.assertEqual(len(rows),1)
