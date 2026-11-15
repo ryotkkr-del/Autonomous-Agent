@@ -365,14 +365,28 @@ def execute(action, allow_tests=False, allow_git=False, approved_urls=(), allow_
         if len(content.encode('utf-8'))>MAX_FILE_BYTES: return 'ERROR: content exceeds size limit'
         p.parent.mkdir(parents=True,exist_ok=True)
         if p.exists() and not p.is_file(): return 'ERROR: destination is not regular file'
-        # Keep numbered backups; avoid overwriting earlier backups.
+        # Backups must be created exclusively: never follow an existing or
+        # dangling symlink at the backup destination.
         if p.exists():
             b=p.with_name(p.name+'.agent-backup')
-            if not b.exists(): shutil.copy2(p,b)
-        temp=p.with_name(p.name+'.agent-tmp')
-        if temp.exists() and temp.is_symlink(): raise ValueError('unsafe temporary file')
-        with temp.open('w',encoding='utf-8') as f: f.write(content); f.flush(); os.fsync(f.fileno())
-        os.replace(temp,p)
+            if b.is_symlink(): raise ValueError('unsafe backup link')
+            if not b.exists():
+                try:
+                    with b.open('xb') as backup, p.open('rb') as source:
+                        shutil.copyfileobj(source,backup)
+                        backup.flush(); os.fsync(backup.fileno())
+                except FileExistsError:
+                    raise ValueError('backup already created concurrently')
+        # A random exclusive temporary file avoids clobbering a pre-planted
+        # hardlink or symlink. os.replace changes the directory entry atomically.
+        fd,temp_name=tempfile.mkstemp(prefix='.agent-write-',suffix='.tmp',dir=p.parent)
+        try:
+            with os.fdopen(fd,'w',encoding='utf-8') as out:
+                out.write(content);out.flush();os.fsync(out.fileno())
+            os.replace(temp_name,p)
+        finally:
+            try: os.unlink(temp_name)
+            except FileNotFoundError: pass
         return f'WROTE {p.relative_to(WORKSPACE.resolve()).as_posix()} ({len(content)} chars)'
     if op=='replace_in_file':
         # JSON payload: {old: exact existing string, new: replacement}; unique-match-only.
