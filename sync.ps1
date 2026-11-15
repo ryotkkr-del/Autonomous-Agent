@@ -1,4 +1,4 @@
-# P0-4 phase 1: fail closed for unattended updates.
+﻿# P0-4 phase 1: fail closed for unattended updates.
 # Default: launch installed local code without fetching GitHub main.
 # -DevMain: interactive developer-only update, NOT a verified release.
 # -CheckReleaseTag: check a signed Git tag, never install it.
