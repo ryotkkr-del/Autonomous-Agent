@@ -1,4 +1,4 @@
-# Autonomous Agent v2.4
+# Autonomous Agent v2.5
 
 Windows用のローカル自律AIエージェント。**GitHubの`main`にアプリ本体とGUIを公開済み**です。既存のv1.1以前のコード・SQLiteデータ形式を引き継いでいます。
 
@@ -544,3 +544,23 @@ python benchmarks/diagnose_ollama.py --input benchmark-results/real-ollama.json 
 分析では、ホストへの意図しない書き込み、Ollamaや実行環境のエラー、停止、生成物の不一致、検証失敗、ステップ不足などを分類します。件数・対象シナリオ・失敗した検査項目を記録し、重要度順に改善案を提示します。成功時には無理に改善課題を作りません。
 
 **安全性と限界:** 分析には保存済みJSONしか使いません。生成コード実行、ネットワーク送信、ジョブ操作、プログラムの自動更新はありません。出力先は指定した診断ファイルだけです。分析が提示するのは原因の確定ではなく**観測に基づく仮説**であり、人間が変更内容を確認して、同条件の実測で効果を判断する必要があります。
+
+## v2.5 — 人間が承認する改善仮説の比較実験
+
+v2.4の失敗分析を参考に、人間が選んでテキストファイルに書いた追加指示を、実Ollamaで比較できるようにしました。候補の指示は実験中の「次の行動を判断するプロンプト」にだけ加えます。計画生成・採点基準・本番ソースコードは変更しません。ベースラインと候補に同じモデル・課題・最大ステップ・試行回数を適用します。
+
+### 使い方
+
+まず v2.4 の診断結果を確認し、試したい改善仮説を自分で `experiment-note.txt` にUTF-8で書いてください（4000バイト以内）。例：`Before finish, verify every required field and the target filename.`
+
+```powershell
+python agent.py benchmark-experiment --instruction-file experiment-note.txt --confirm --model gemma3:4b --steps 14 --trials 2
+```
+
+GUIには「改善案を比較実験」を追加しました。人間が追加指示ファイル・モデル・試行回数・ステップ上限を指定し、実行前に明示的に承認します。
+
+結果は `benchmark-results/experiments/` の固有フォルダに `baseline.json`、`candidate.json`、`comparison.json` を保存します。既存結果は上書きしません。改善候補を自動採用して本番エージェントのコードやプロンプトを書き換える機能はありません。
+
+**限界:** 実Ollamaによる成功率は、ローカルPCで実行して初めて測定できます。GitHub ActionsのCI成功はモデル能力の向上を意味しません。試行回数が少ない場合の成功率差は偶然であり得ます。Python課題は構文や関数定義の静的評価のみです。
+
+**安全性:** `--confirm` がなければ実行しません。ローカルOllamaのみを呼び出し、使い捨てDBと仮想ワークスペースを使用します。生成コード実行、Web検索、Git、Codex、自動承認は許可しません。追加指示は最大4000バイトで、AI生成の診断文書を無条件に自動適用しません。
