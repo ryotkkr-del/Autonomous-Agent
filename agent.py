@@ -680,13 +680,14 @@ def safety_summary(job_id=None):
             if not row: raise ValueError('unknown job')
         prefs=db.execute('SELECT allow_search FROM agent_preferences WHERE job_id=?',(job_id,)).fetchone() if row else None
         approved=db.execute('SELECT COUNT(*) FROM approved_urls WHERE job_id=?',(job_id,)).fetchone()[0] if row else 0
+        gate=db.execute('SELECT approval_required FROM job_controls WHERE job_id=?',(job_id,)).fetchone() if row else None
     import sandbox_runner
     docker_ready, docker_reason=sandbox_runner.availability()
     return {
         'job_id':job_id,
         'sandbox':{'backend':'Docker Linux containers','available':docker_ready,'detail':docker_reason},
         'permissions':{
-            'file_edit_approval':bool(row and db is not None) if False else False,
+            'file_edit_approval':bool(gate and gate['approval_required']),
             'python_tests':bool(row['allow_tests']) if row else False,
             'local_git_checkpoint':bool(row['allow_git']) if row else False,
             'web_search':bool(prefs['allow_search']) if prefs else False,
@@ -1253,7 +1254,7 @@ def doctor():
     except Exception: print('Ollama: not reachable')
 
 def main():
-    parser=argparse.ArgumentParser(description='Autonomous Agent v1.4 — acceptance checks and bounded recovery')
+    parser=argparse.ArgumentParser(description='Autonomous Agent v2.0 — reviewed edits and sandboxed tests')
     sub=parser.add_subparsers(dest='command',required=True)
     n=sub.add_parser('new');n.add_argument('goal')
     for command in ('protect-job','pending'):
