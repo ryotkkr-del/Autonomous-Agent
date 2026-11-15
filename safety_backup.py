@@ -135,6 +135,7 @@ def _copy_tree(source: Path, dest: Path, paths: dict[str, dict[str, object]]) ->
                 raise ValueError("nonregular backup source")
             rel = current.relative_to(source)
             destination = dest / rel
+            _check_name(destination.relative_to(dest.parent).as_posix())
             before = current.stat()
             if before.st_size > MAX_SINGLE_FILE:
                 raise ValueError("individual file exceeds backup limit")
@@ -154,13 +155,19 @@ def _manifest_file(snapshot: Path) -> Path:
 
 
 def _check_name(name: str) -> None:
-    if not isinstance(name, str) or not name or "\\" in name:
+    if not isinstance(name, str) or not name or "\\" in name or ":" in name:
         raise ValueError("invalid manifest path")
     p = PurePosixPath(name)
     if (p.is_absolute() or not p.parts or
             any(x in ("", ".", "..") for x in p.parts) or
             p.as_posix() != name):
         raise ValueError("manifest contains a traversal or unsafe path")
+    win_reserved = {"CON", "PRN", "AUX", "NUL"}
+    win_reserved.update("COM" + str(i) for i in range(1, 10))
+    win_reserved.update("LPT" + str(i) for i in range(1, 10))
+    if any(part.endswith((" ", ".")) or part.split(".")[0].upper() in win_reserved
+           or any(ord(ch) < 32 for ch in part) for part in p.parts):
+        raise ValueError("manifest contains a Windows-unsafe path")
     if p.parts[0] not in (*DATA_DIRS, "state.sqlite3"):
         raise ValueError("unexpected backup file path")
     if p.parts[0] == "state.sqlite3" and len(p.parts) != 1:
@@ -192,6 +199,10 @@ def verify_snapshot(snapshot: Path) -> dict:
                 type(record.get("bytes")) is not int or record["bytes"] < 0):
             raise ValueError("invalid backup manifest entry")
         path = snapshot.joinpath(*PurePosixPath(name).parts)
+        parent = path.parent
+        while parent != snapshot:
+            _check_tree_path(parent)
+            parent = parent.parent
         _check_tree_path(path)
         if not path.is_file():
             raise ValueError("missing backup file")
