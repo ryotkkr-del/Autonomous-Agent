@@ -188,24 +188,14 @@ def workspace_fingerprint():
 
 
 def run_workspace_tests(allowed):
-    """Executes user-supplied code: call ONLY after explicit human opt-in.
-
-    Not an OS sandbox. Running arbitrary tests can access all user privileges.
-    """
-    if not allowed: return 'ERROR: run_tests disabled. Enable explicitly using allow-tests JOB_ID'
-    tests=safe_path('tests')
-    if not tests_exist(): return 'ERROR: no test*.py discovered in workspace/tests'
-    try:
-        cp=subprocess.run([sys.executable, '-I', '-m', 'unittest', 'discover', '-s', str(tests), '-p', 'test*.py'],
-            cwd=WORKSPACE, capture_output=True, text=True, timeout=MAX_TEST_SECONDS, check=False,
-            env={**os.environ, 'PYTHONDONTWRITEBYTECODE':'1'})
-        output=(cp.stdout+'\n'+cp.stderr)[-MAX_CHECK_OUTPUT:]
-        label='TEST PASS' if cp.returncode==0 and not re.search(r'Ran\s+0\s+tests?', output) else f'ERROR: tests failed or none found (exit={cp.returncode})'
-        return label+'\n'+output
-    except subprocess.TimeoutExpired:
-        return f'ERROR: tests timed out after {MAX_TEST_SECONDS}s'
-    except OSError as exc:
-        return 'ERROR: test execution failed: '+str(exc)[:400]
+    """Never execute untrusted tests on the host, including when Docker is absent."""
+    if not allowed:
+        return 'ERROR: run_tests disabled. Enable explicitly using allow-tests JOB_ID'
+    if not tests_exist():
+        return 'ERROR: no test*.py discovered in workspace/tests'
+    # Import inside function keeps the other agent features usable without Docker.
+    import sandbox_runner
+    return sandbox_runner.run_tests(WORKSPACE, timeout=MAX_TEST_SECONDS)
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -655,8 +645,11 @@ def safety_summary(job_id=None):
             if not row: raise ValueError('unknown job')
         prefs=db.execute('SELECT allow_search FROM agent_preferences WHERE job_id=?',(job_id,)).fetchone() if row else None
         approved=db.execute('SELECT COUNT(*) FROM approved_urls WHERE job_id=?',(job_id,)).fetchone()[0] if row else 0
+    import sandbox_runner
+    docker_ready, docker_reason=sandbox_runner.availability()
     return {
         'job_id':job_id,
+        'sandbox':{'backend':'Docker Linux containers','available':docker_ready,'detail':docker_reason},
         'permissions':{
             'python_tests':bool(row['allow_tests']) if row else False,
             'local_git_checkpoint':bool(row['allow_git']) if row else False,
@@ -665,8 +658,8 @@ def safety_summary(job_id=None):
         },
         'scope':'workspace-only text actions; no arbitrary shell or PC control tools',
         'risks':[
-            'ALERT: Python tests run with your Windows account permissions; workspace is NOT an OS sandbox.',
-            'Python tests can read or modify files outside workspace, use the network and start subprocesses.',
+            'Python tests require Docker Linux-container isolation; no Docker means no execution.',
+            'Sandbox restricts networking and host workspace writes, but container escapes and Docker-daemon compromise remain residual risks.',
             'Git checkpoints may copy secrets into LOCAL Git history; no automatic remote push.',
             'Web search sends query text to Bing; approved URL requests send traffic to external websites.',
             'Automatic scheduled runs require manual opt-in and run while your PC/account is available.',
@@ -1021,7 +1014,7 @@ def set_tests(job_id, enabled):
         row=db.execute('SELECT status FROM jobs WHERE id=?',(job_id,)).fetchone()
         if not row: raise ValueError('unknown job')
         db.execute('UPDATE jobs SET allow_tests=?, updated=? WHERE id=?',(int(enabled),now(),job_id))
-        print(('WARNING: workspace tests can run arbitrary Python with your user permissions.' if enabled else 'Tests disabled.'), 'job #'+str(job_id))
+        print(('Docker isolation required: tests will NOT execute without Docker; never a host fallback.' if enabled else 'Tests disabled.'), 'job #'+str(job_id))
 
 
 def set_git(job_id, enabled):
