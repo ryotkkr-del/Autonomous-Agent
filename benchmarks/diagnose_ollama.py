@@ -190,10 +190,11 @@ def main(argv=None):
         source = json.loads(args.input.read_text(encoding="utf-8"))
         result = diagnose(source)
         markdown = render_markdown(result)
+        paths=[args.output.resolve(),args.markdown.resolve()]
+        if args.input.resolve() in paths or paths[0] == paths[1]:
+            raise ValueError("output paths must be distinct and cannot overwrite input benchmark")
         for path, content in ((args.output, json.dumps(result, ensure_ascii=False, indent=2) + "\n"),
                               (args.markdown, markdown)):
-            if path.resolve() == args.input.resolve():
-                raise ValueError("output cannot overwrite input benchmark")
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content, encoding="utf-8")
     except (OSError, ValueError, TypeError, KeyError) as exc:
