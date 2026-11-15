@@ -12,12 +12,14 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 from contextlib import contextmanager, redirect_stdout
 from datetime import datetime, timezone
 import io
 import json
 import os
 from pathlib import Path
+from unittest.mock import patch
 import re
 import sys
 import tempfile
@@ -205,7 +207,7 @@ def _classify(status, history, passed, error=None):
     return "step_budget_or_incomplete"
 
 
-def run_case(name, model, steps):
+def run_case(name, model, steps, decision_instruction=''):
     started = time.perf_counter()
     error = None
     with isolated_agent():
@@ -213,7 +215,16 @@ def run_case(name, model, steps):
         job_id = agent.make_job(CASES[name]["goal"], require_approval=True, draft_mode=True)
         output = io.StringIO()
         try:
-            with redirect_stdout(output):
+            # The original goal, plan and acceptance rules stay unchanged.
+            # Only decision prompts receive the experimental note; the source
+            # code of the agent and the user workspace remain untouched.
+            original_decide = agent.decide
+            def experimental_decide(goal, *args, **kwargs):
+                if not decision_instruction:
+                    return original_decide(goal, *args, **kwargs)
+                tagged = goal + "\n[DECISION-ONLY EXPERIMENTAL GUIDANCE]\n" + decision_instruction
+                return original_decide(tagged, *args, **kwargs)
+            with redirect_stdout(output), patch.object(agent, 'decide', side_effect=experimental_decide):
                 agent.run(job_id, model, budget=steps)
         except Exception as exc:
             error = f"{type(exc).__name__}: {str(exc)[:250]}"
@@ -277,12 +288,12 @@ def aggregate(results):
     }
 
 
-def benchmark(model, selected, steps, trials=1):
+def benchmark(model, selected, steps, trials=1, decision_instruction=''):
     report = []
     for name in selected:
         for trial in range(1, trials + 1):
             print(f"Running real Ollama scenario={name} trial={trial}/{trials}", flush=True)
-            outcome = run_case(name, model, steps)
+            outcome = run_case(name, model, steps, decision_instruction=decision_instruction)
             outcome["trial"] = trial
             report.append(outcome)
             print(f"  {'PASS' if outcome['passed'] else 'FAIL'} "
@@ -293,6 +304,12 @@ def benchmark(model, selected, steps, trials=1):
         "mode": "real_ollama",
         "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "model": model,
+        "experiment": {
+            "decision_instruction_sha256": (hashlib.sha256(decision_instruction.encode('utf-8')).hexdigest()
+                                            if decision_instruction else None),
+            "decision_instruction_bytes": len(decision_instruction.encode('utf-8')),
+            "scope": "decision_only",
+        },
         "step_budget": steps,
         "trials": trials,
         "no_auto_approval": True,
