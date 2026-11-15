@@ -635,6 +635,48 @@ def set_criteria(job_id, required_files=(), contains=()):
     print('Acceptance checks saved:',len(checks))
 
 
+
+def criteria_summary(job_id):
+    """Read stored criteria without resetting them."""
+    with connection() as db:
+        job=db.execute('SELECT id FROM jobs WHERE id=?',(job_id,)).fetchone()
+        if not job: raise ValueError('unknown job')
+        row=db.execute('SELECT criteria FROM job_controls WHERE job_id=?',(job_id,)).fetchone()
+        return json.loads(row['criteria']) if row else {'checks':[]}
+
+
+def safety_summary(job_id=None):
+    """Report effective permissions and known limitations without executing actions."""
+    with connection() as db:
+        if job_id is None:
+            row=None
+        else:
+            row=db.execute('SELECT id,allow_tests,allow_git,status FROM jobs WHERE id=?',(job_id,)).fetchone()
+            if not row: raise ValueError('unknown job')
+        prefs=db.execute('SELECT allow_search FROM agent_preferences WHERE job_id=?',(job_id,)).fetchone() if row else None
+        approved=db.execute('SELECT COUNT(*) FROM approved_urls WHERE job_id=?',(job_id,)).fetchone()[0] if row else 0
+    return {
+        'job_id':job_id,
+        'permissions':{
+            'python_tests':bool(row['allow_tests']) if row else False,
+            'local_git_checkpoint':bool(row['allow_git']) if row else False,
+            'web_search':bool(prefs['allow_search']) if prefs else False,
+            'approved_web_pages':approved,
+        },
+        'scope':'workspace-only text actions; no arbitrary shell or PC control tools',
+        'risks':[
+            'ALERT: Python tests run with your Windows account permissions; workspace is NOT an OS sandbox.',
+            'Python tests can read or modify files outside workspace, use the network and start subprocesses.',
+            'Git checkpoints may copy secrets into LOCAL Git history; no automatic remote push.',
+            'Web search sends query text to Bing; approved URL requests send traffic to external websites.',
+            'Automatic scheduled runs require manual opt-in and run while your PC/account is available.',
+            'The model can generate wrong or destructive content within its allowed workspace.',
+        ],
+        'guidance':'Do not enable tests for unreviewed AI-generated code. For untrusted code use a separate Windows Sandbox/VM, non-admin account and backups.',
+    }
+
+
+
 def acceptance_check(db,job_id):
     row=db.execute('SELECT criteria FROM job_controls WHERE job_id=?',(job_id,)).fetchone()
     criteria=json.loads(row['criteria']) if row else {}
@@ -1055,7 +1097,7 @@ def main():
         x=sub.add_parser(name);x.add_argument('job_id',type=int)
     for name in ('approve-url','revoke-url'):
         x=sub.add_parser(name);x.add_argument('job_id',type=int);x.add_argument('url')
-    for name in ('plan','history','repairs','tasks','diagnoses'):
+    for name in ('plan','history','repairs','tasks','diagnoses','criteria-show'):
         x=sub.add_parser(name);x.add_argument('job_id',type=int)
     rep=sub.add_parser('replan');rep.add_argument('job_id',type=int);rep.add_argument('--model',default=MODEL)
     d=sub.add_parser('diagnose');d.add_argument('job_id',type=int);d.add_argument('--model',default=MODEL)
@@ -1064,6 +1106,7 @@ def main():
     cr.add_argument('--file',action='append',default=[])
     cr.add_argument('--contains',action='append',default=[],metavar='PATH::TEXT')
     t=sub.add_parser('tick');t.add_argument('--steps',type=int,default=8);t.add_argument('--model',default=MODEL)
+    safe=sub.add_parser('safety');safe.add_argument('job_id',type=int,nargs='?')
     sub.add_parser('status');sub.add_parser('doctor');sub.add_parser('stop');sub.add_parser('clear-stop')
     a=parser.parse_args();ensure_workspace()
     if a.command=='new': print('Created job #',make_job(a.goal))
@@ -1088,6 +1131,8 @@ def main():
     elif a.command=='diagnose': diagnose(a.job_id,a.model)
     elif a.command=='diagnoses': show_diagnoses(a.job_id)
     elif a.command=='criteria': set_criteria(a.job_id,a.file,a.contains)
+    elif a.command=='criteria-show': print(json.dumps(criteria_summary(a.job_id),ensure_ascii=False,indent=2))
+    elif a.command=='safety': print(json.dumps(safety_summary(a.job_id),ensure_ascii=False,indent=2))
     elif a.command=='tick': tick(a.model,a.steps)
     elif a.command=='status': show_jobs()
     elif a.command=='doctor': doctor()
