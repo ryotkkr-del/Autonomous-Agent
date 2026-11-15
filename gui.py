@@ -221,6 +221,10 @@ class DesktopApp:
         ttk.Button(more,text='診断の履歴',command=lambda:self.show_job_info('diagnoses','診断の履歴')).pack(side='left',padx=(0,7))
         ttk.Button(more,text='計画を見直す',command=self.replan_job).pack(side='left',padx=(0,7))
         ttk.Button(more,text='停止状態の解除',command=self.unblock_job).pack(side='left')
+        checks=ttk.Frame(outer);checks.pack(fill='x',pady=(0,5))
+        ttk.Button(checks,text='成功条件を設定',command=self.set_success_criteria).pack(side='left',padx=(0,7))
+        ttk.Button(checks,text='成功条件を見る',command=self.view_success_criteria).pack(side='left',padx=(0,7))
+        ttk.Button(checks,text='PCへの影響・権限を確認',command=self.view_safety).pack(side='left')
         opts = ttk.Frame(outer); opts.pack(fill='x', pady=(3, 9))
         self.testbox=ttk.Checkbutton(opts,text='Pythonテスト実行を許可（注意）',variable=self.tests_enabled,command=self.change_tests)
         self.testbox.pack(side='left',padx=(0,18))
@@ -439,6 +443,38 @@ class DesktopApp:
         if job_id is None:return
         if not messagebox.askyesno('計画の更新','現在の計画を見直します。既存の成果物は保持します。実行しますか？'):return
         self.launch(['replan',str(job_id)],'計画の更新')
+
+    def set_success_criteria(self):
+        job_id=self._current_job()
+        if job_id is None:return
+        name=simpledialog.askstring('成功条件','必須ファイルを1つ指定してください（例: lesson.md）。既存の成功条件は上書きされます。',parent=self.root)
+        if name is None:return
+        name=name.strip()
+        if not name:
+            messagebox.showwarning('入力を確認','ファイル名を入力してください');return
+        needle=simpledialog.askstring('成功条件','必須文字列（任意）。含まれていることを確認する文字列。空欄なら存在のみ確認。',parent=self.root)
+        if needle is None:return
+        args=['criteria',str(job_id),'--file',name]
+        if needle:args+=['--contains',name+'::'+needle]
+        if not messagebox.askyesno('成功条件の保存','ジョブの成功条件をこの設定に置き換えますか？'):return
+        self.launch(args,'成功条件を保存')
+
+    def view_success_criteria(self):
+        job_id=self._current_job()
+        if job_id is not None:self.launch(['criteria-show',str(job_id)],'成功条件を表示')
+
+    def view_safety(self):
+        job_id=self._current_job()
+        if job_id is None:
+            self.launch(['safety'],'アプリの危険性と許可')
+        else:
+            self.launch(['safety',str(job_id)],'ジョブの権限と危険性')
+        messagebox.showwarning('PCの安全性について',
+            'このアプリはWindowsのカーネルやドライバーを操作しません。\\n'
+            'ただし、許可したPythonテストは通常のユーザー権限で実行され、'
+            '作業フォルダ外へのアクセスや外部通信も技術的に可能です。\\n'
+            '未確認のAI生成コードにテスト実行を許可しないでください。'
+            '隔離が必要ならWindows Sandboxまたは仮想マシンを利用してください。')
 
     def change_search(self):
         job_id=self._current_job()
