@@ -752,6 +752,120 @@ def clear_run_failure(db,job_id):
     db.commit()
 
 
+
+def approval_enabled(db,job_id):
+    row=db.execute('SELECT approval_required FROM job_controls WHERE job_id=?',(job_id,)).fetchone()
+    return bool(row and row['approval_required'])
+
+
+def protect_job(job_id):
+    """One-way protection; existing jobs must opt in explicitly."""
+    with connection() as db:
+        job=db.execute('SELECT id FROM jobs WHERE id=?',(job_id,)).fetchone()
+        if not job: raise ValueError('unknown job')
+        db.execute('INSERT INTO job_controls(job_id,approval_required) VALUES(?,1) ON CONFLICT(job_id) DO UPDATE SET approval_required=1',(job_id,))
+    print('Approval required for future file edits in job',job_id)
+
+
+def _file_digest(p):
+    if not p.exists(): return 'ABSENT'
+    if not p.is_file() or p.is_symlink(): raise ValueError('unsafe target file')
+    if p.stat().st_size>MAX_FILE_BYTES: raise ValueError('target file too large')
+    return hashlib.sha256(p.read_bytes()).hexdigest()
+
+
+def stage_change(db,job_id,a):
+    """Persist one proposed write, without modifying the job workspace."""
+    filename=a['path']
+    path=safe_path(filename)
+    op=a['action']
+    if op not in ('write_file','replace_in_file'): raise ValueError('not a file edit')
+    if path.name.endswith(('.agent-backup','.agent-tmp')): raise ValueError('reserved path')
+    before=_file_digest(path)
+    if op=='replace_in_file':
+        change=json.loads(a['content'])
+        old,new=change.get('old'),change.get('new')
+        if not isinstance(old,str) or not old or not isinstance(new,str):
+            raise ValueError('invalid replacement')
+        if before=='ABSENT': raise ValueError('replace target missing')
+        source=path.read_text(encoding='utf-8')
+        if source.count(old)!=1: raise ValueError('replace target must occur once')
+        content=source.replace(old,new,1)
+    else:
+        content=a['content']
+    if not isinstance(content,str) or len(content.encode('utf-8'))>MAX_FILE_BYTES:
+        raise ValueError('proposed edit too large')
+    existing=db.execute("SELECT id FROM pending_changes WHERE job_id=? AND state='pending'",(job_id,)).fetchone()
+    if existing: raise ValueError('another edit is already awaiting approval')
+    c=db.execute("""INSERT INTO pending_changes(job_id,path,content,expected_sha,original_action,reason,state,created)
+             VALUES(?,?,?,?,?,?,'pending',?)""",
+             (job_id,filename,content,before,op,a.get('reason','')[:1000],now()))
+    db.commit()
+    return c.lastrowid
+
+
+def pending_changes(job_id):
+    with connection() as db:
+        job=db.execute('SELECT id FROM jobs WHERE id=?',(job_id,)).fetchone()
+        if not job: raise ValueError('unknown job')
+        rows=db.execute("""SELECT id,path,original_action,created,expected_sha
+                        FROM pending_changes WHERE job_id=? AND state='pending' ORDER BY id""",(job_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def change_preview(job_id,change_id):
+    import difflib
+    with connection() as db:
+        job=db.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+        if not job: raise ValueError('unknown job')
+        row=db.execute("SELECT * FROM pending_changes WHERE id=? AND job_id=? AND state='pending'",(change_id,job_id)).fetchone()
+        if not row: raise ValueError('pending edit not found')
+        with job_workspace(job):
+            path=safe_path(row['path'])
+            if _file_digest(path)!=row['expected_sha']:
+                raise ValueError('file changed since proposal; reject and replan')
+            previous=path.read_text(encoding='utf-8',errors='replace') if path.exists() else ''
+            diff=''.join(difflib.unified_diff(previous.splitlines(keepends=True),
+                                             row['content'].splitlines(keepends=True),
+                                             fromfile='before/'+row['path'],tofile='after/'+row['path']))
+            return {'id':row['id'],'job_id':job_id,'path':row['path'],
+                    'action':row['original_action'],'reason':row['reason'],
+                    'diff':diff[:140_000],'truncated':len(diff)>140_000}
+
+
+def resolve_change(job_id,change_id,approve=False):
+    """Apply only after explicit approval; stale revisions fail closed."""
+    with single_runner():
+        with connection() as db:
+            job=db.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+            if not job: raise ValueError('unknown job')
+            row=db.execute("SELECT * FROM pending_changes WHERE id=? AND job_id=? AND state='pending'",(change_id,job_id)).fetchone()
+            if not row: raise ValueError('pending edit not found')
+            if job['status']!='awaiting_approval':
+                raise ValueError('job is not awaiting approval')
+            with job_workspace(job):
+                if not approve:
+                    db.execute("UPDATE pending_changes SET state='rejected' WHERE id=?",(change_id,))
+                    record(db,job_id,{'action':'rejected_change','path':row['path'],'content':'','reason':'user rejected edit'},
+                           'REJECTED: proposal discarded; no file changes made')
+                    update_status(db,job_id,'paused','change rejected')
+                    return 'Rejected edit #'+str(change_id)
+                path=safe_path(row['path'])
+                if _file_digest(path)!=row['expected_sha']:
+                    # Do not lose the original proposal; it can be rejected.
+                    raise ValueError('file modified since proposal; refused stale approval')
+                # Changes to executable code are still just text writes.
+                result=execute({'action':'write_file','path':row['path'],'content':row['content'],
+                                'reason':row['reason']},allow_tests=False,allow_git=False)
+                if not result.startswith('WROTE'):
+                    raise RuntimeError('approved edit failed: '+result)
+                db.execute("UPDATE pending_changes SET state='approved' WHERE id=?",(change_id,))
+                record(db,job_id,{'action':'write_file','path':row['path'],'content':row['content'],
+                                  'reason':'approved by user'},result)
+                update_status(db,job_id,'paused','approved edit; ready to resume')
+                return 'Approved edit #'+str(change_id)+': '+result
+
+
 def make_job(goal, require_approval=False):
     with connection() as db:
         c=db.execute('INSERT INTO jobs(goal,status,created,updated) VALUES(?,?,?,?)',(goal,'paused',now(),now()))
