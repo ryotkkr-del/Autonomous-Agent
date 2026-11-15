@@ -99,6 +99,17 @@ class SecurityBoundaryTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     agent.ollama([],{},'gemma3:4b')
 
+    def test_localhost_ollama_is_pinned_to_numeric_loopback(self):
+        values=[(2,1,6,'',('127.0.0.1',11434)),
+                (10,1,6,'',('::1',11434,0,0))]
+        with patch.object(agent.socket,'getaddrinfo',return_value=values):
+            address=agent._validate_local_ollama_url('http://localhost:11434/api/chat')
+        self.assertEqual(address,'http://127.0.0.1:11434/api/chat')
+        remote=[(2,1,6,'',('93.184.216.34',11434))]
+        with patch.object(agent.socket,'getaddrinfo',return_value=remote):
+            with self.assertRaisesRegex(ValueError,'loopback'):
+                agent._validate_local_ollama_url('http://localhost:11434/api/chat')
+
     def test_ollama_uses_explicit_no_proxy_and_redirect_handler(self):
         payload=json.dumps({'message':{'content':'{"tasks":[]}'}}).encode()
         response=MagicMock()
