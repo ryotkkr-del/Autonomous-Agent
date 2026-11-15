@@ -16,14 +16,27 @@ class DockerIntegrationTests(unittest.TestCase):
             tests = work / "tests"
             tests.mkdir()
             (tests / "test_security.py").write_text(
-                "import pathlib, socket, unittest\n"
+                "import os, pathlib, socket, unittest\n"
                 "class Security(unittest.TestCase):\n"
                 "  def test_workspace_cannot_be_modified(self):\n"
                 "    with self.assertRaises(OSError):\n"
                 "      pathlib.Path('/workspace/evil.txt').write_text('changed')\n"
                 "  def test_network_is_disabled(self):\n"
                 "    with self.assertRaises(OSError):\n"
-                "      socket.create_connection(('1.1.1.1', 443), timeout=1)\n",
+                "      socket.create_connection(('1.1.1.1', 443), timeout=1)\n"
+                "  def test_nonroot_and_readonly_root(self):\n"
+                "    self.assertNotEqual(os.geteuid(), 0)\n"
+                "    with self.assertRaises(OSError):\n"
+                "      pathlib.Path('/etc/autonomous-agent-should-not-write').write_text('blocked')\n"
+                "  def test_cgroup_limits_when_exposed(self):\n"
+                "    def check(name, maximum):\n"
+                "      location=pathlib.Path('/sys/fs/cgroup')/name\n"
+                "      if location.is_file():\n"
+                "        value=location.read_text().strip()\n"
+                "        self.assertNotEqual(value, 'max')\n"
+                "        self.assertLessEqual(int(value), maximum)\n"
+                "    check('pids.max',64)\n"
+                "    check('memory.max',536870912)\n",
                 encoding="utf-8"
             )
             result = sandbox_runner.run_tests(work)
