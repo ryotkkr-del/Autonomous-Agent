@@ -231,6 +231,8 @@ class DesktopApp:
         ttk.Button(checks,text='変更案を確認・承認',command=self.review_pending_change).pack(side='left',padx=(0,7))
         ttk.Button(checks,text='変更を元に戻す',command=self.review_rollback).pack(side='left',padx=(0,7))
         ttk.Button(checks,text='旧ジョブの保護を有効化',command=self.protect_legacy_job).pack(side='left')
+        draft_line=ttk.Frame(outer);draft_line.pack(fill='x',pady=(0,4))
+        ttk.Button(draft_line,text='既存ジョブを一括下書きモードにする',command=self.enable_virtual_draft).pack(side='left')
         opts = ttk.Frame(outer); opts.pack(fill='x', pady=(3, 9))
         self.testbox=ttk.Checkbutton(opts,text='Pythonテスト実行を許可（注意）',variable=self.tests_enabled,command=self.change_tests)
         self.testbox.pack(side='left',padx=(0,18))
@@ -514,6 +516,16 @@ class DesktopApp:
             return
         self.launch(['sandbox-prepare','--confirm'],'Dockerイメージの準備',
                     on_success=lambda _: self.check_sandbox())
+
+    def enable_virtual_draft(self):
+        job_id=self._current_job()
+        if job_id is None:return
+        if not messagebox.askyesno('一括下書きモードを有効化',
+            'AIは複数ファイルの変更案をSQLite内で作成し、完成後にまとめてレビューします。'
+            '実ファイルは承認まで書き換えません。テストはDocker隔離時のみ実行します。'
+            '今ある保留中の変更があれば、先に承認か却下が必要です。続けますか？'):
+            return
+        self.launch(['enable-draft',str(job_id)],'一括下書きモードを有効化')
 
     def protect_legacy_job(self):
         job_id=self._current_job()
