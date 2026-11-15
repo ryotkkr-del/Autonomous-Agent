@@ -431,7 +431,7 @@ python agent.py safety 1
 
 新しいCLI/GUIジョブでは、AIが `write_file` または `replace_in_file` を提案した時点で**実際のファイルを書き換えず**、SQLiteに変更案を保存して `awaiting_approval` で停止します。変更はファイル差分を確認した人が承認した場合に限り反映されます。却下時は書き込みません。既存のジョブ・データは維持します。
 
-**GUI:** ジョブを選択 →「変更案を確認・承認」→ 差分を確認 → 「承認して反映」または「却下する」。変更反映後に「開始 / 再開」で続きを実行します。古いジョブには「旧ジョブの保護を有効化」を使用してください。
+**GUI:** ジョブを選択 →「変更案を確認・承認」→ 差分を確認 → 「承認して反映」または「却下する」。変更反映後に「開始 / 再開」で続きを実行します。v2.0への初回移行時、古いジョブにも承認制を自動適用します。「旧ジョブの保護を有効化」は、ライブラリから直接作成された未保護ジョブの補助用です。
 
 **CLI:**
 ```powershell
@@ -443,7 +443,7 @@ python agent.py approve-change 1 CHANGE_ID
 # または python agent.py reject-change 1 CHANGE_ID
 python agent.py run 1 --steps 8
 
-# 以前から存在するジョブにも承認ゲートを適用
+# 未保護と表示されるジョブにも承認ゲートを適用
 python agent.py protect-job OLD_JOB_ID
 python agent.py safety OLD_JOB_ID
 ```
