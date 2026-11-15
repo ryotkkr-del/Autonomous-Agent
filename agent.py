@@ -859,7 +859,7 @@ def scan_proposed_secrets(content):
         r'-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----',
         r'(?<![A-Za-z0-9])gh[pousr]_[A-Za-z0-9_]{20,}',
         r'(?<![A-Za-z0-9])AKIA[0-9A-Z]{16}(?![0-9A-Z])',
-        r'(?i)(?:api[_-]?key|secret[_-]?key|access[_-]?token|password)\\s*[:=]\\s*["\\'][^"\\'\\n]{12,}["\\']',
+        r"(?i)(?:api[_-]?key|secret[_-]?key|access[_-]?token|password)\\s*[:=]\\s*[^\\s]{12,}",
     ]
     return any(re.search(pattern,content) for pattern in patterns)
 
