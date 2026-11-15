@@ -52,7 +52,7 @@ class TestV06(unittest.TestCase):
         (folder/'tests').mkdir(parents=True)
         (folder/'main.py').write_text('answer=42\n')
         (folder/'tests'/'test_example.py').write_text('import unittest\nclass T(unittest.TestCase):\n def test_ok(self): self.assertEqual(42,42)\n')
-        with patch.object(agent,'decide',side_effect=decision), patch.object(agent,'review',return_value=(True,'verified')):
+        with patch.object(agent,'decide',side_effect=decision), patch.object(agent,'review',return_value=(True,'verified')), patch.object(agent,'run_workspace_tests',return_value='TEST PASS [mocked Docker sandbox]\nRan 1 test in 0.01s'):
             agent.run(job_id,'test',budget=1)
         with agent.connection() as db:
             self.assertEqual(db.execute('SELECT status FROM jobs WHERE id=?',(job_id,)).fetchone()['status'],'done')
@@ -67,7 +67,7 @@ class TestV06(unittest.TestCase):
         (folder/'tests').mkdir(parents=True)
         (folder/'main.py').write_text('answer=42\n')
         (folder/'tests'/'test_example.py').write_text('import unittest\nclass T(unittest.TestCase):\n def test_no(self): self.fail("intended failure")\n')
-        with patch.object(agent,'decide',return_value={'action':'finish','path':'','content':'','reason':'done'}),patch.object(agent,'review',return_value=(True,'should not run')) as review:
+        with patch.object(agent,'decide',return_value={'action':'finish','path':'','content':'','reason':'done'}),patch.object(agent,'review',return_value=(True,'should not run')) as review, patch.object(agent,'run_workspace_tests',return_value='ERROR: sandbox test failed\nFAIL: intended failure'):
             agent.run(job_id,'test',budget=1)
         review.assert_not_called()
         with agent.connection() as db:
