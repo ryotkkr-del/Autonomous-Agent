@@ -322,6 +322,16 @@ def git_command(args):
 
 def git_snapshot(allowed):
     if not allowed: return 'ERROR: Git checkpoint disabled. Use allow-git JOB_ID.'
+    # Never stage likely credentials into a new persistent Git history.
+    # The user must remove/relocate these files before snapshotting.
+    sensitive=('secret','password','credential','private_key','api_key','token','id_rsa')
+    for candidate in WORKSPACE.rglob('*'):
+        if '.git' in candidate.relative_to(WORKSPACE).parts: continue
+        if candidate.is_file() and (
+            candidate.name.startswith('.') and candidate.name.lower() in ('.env','.npmrc','.pypirc')
+            or any(word in candidate.name.lower() for word in sensitive)
+        ):
+            return 'ERROR: Git snapshot refused: potentially sensitive filename in workspace'
     if not (WORKSPACE/'.git').exists():
         rc,out=git_command(['init','--quiet'])
         if rc!=0: return 'ERROR: Git init failed: '+out
@@ -675,7 +685,7 @@ def safety_summary(job_id=None):
         'risks':[
             'Python tests require Docker Linux-container isolation; no Docker means no execution.',
             'Sandbox restricts networking and host workspace writes, but container escapes and Docker-daemon compromise remain residual risks.',
-            'Git checkpoints may copy secrets into LOCAL Git history; no automatic remote push.',
+            'Git checkpoints refuse common secret-like filenames but cannot detect embedded credentials in normal files; no automatic remote push.',
             'Web search sends query text to Bing; approved URL requests send traffic to external websites.',
             'Automatic scheduled runs require manual opt-in and run while your PC/account is available.',
             'The model can generate wrong or destructive content within its allowed workspace.',
