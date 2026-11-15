@@ -115,7 +115,8 @@ class RealBenchmarkTests(unittest.TestCase):
         with patch.object(sys, "argv", ["agent.py", "benchmark-real",
                                        "--model", "gemma3:4b", "--steps", "3", "--trials", "2",
                                        "--scenarios", "note,json"]), \
-             patch.object(cli_real, "main", return_value=0) as invoked:
+             patch.object(cli_real, "main", return_value=0) as invoked, \
+             patch.object(agent, "ensure_workspace"):
             with self.assertRaises(SystemExit) as done:
                 agent.main()
         self.assertEqual(done.exception.code, 0)
