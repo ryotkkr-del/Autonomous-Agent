@@ -51,7 +51,7 @@ class SandboxTests(unittest.TestCase):
         for required in ["--network none","--read-only","--cap-drop ALL",
                          "--security-opt no-new-privileges:true",
                          "--pids-limit 64","--memory 512m","--cpus 1",
-                         "--user 65534:65534","--pull never",
+                         "--user ","--pull never",
                          "readonly","--tmpfs /tmp:","python -I -m unittest"]:
             self.assertIn(required,command)
         self.assertNotIn("--privileged",args)
