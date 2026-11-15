@@ -141,6 +141,21 @@ class VerifiedBackupTests(unittest.TestCase):
                 backup.create_backup(agent.ROOT, self.dest)
         self.assertFalse(any(x.name.startswith("snapshot-") for x in self.dest.iterdir()))
 
+    def test_orphaned_sqlite_wal_blocks_backup(self):
+        Path(str(agent.DB) + "-wal").write_bytes(b"orphaned wal")
+        with self.assertRaisesRegex(ValueError, "WAL/journal"):
+            backup.create_backup(agent.ROOT, self.dest)
+        self.assertFalse(any(path.name.startswith("snapshot-") for path in self.dest.iterdir()))
+
+    def test_broken_workspace_link_blocks_backup(self):
+        link = agent.WORKSPACE / "dangling.txt"
+        try:
+            link.symlink_to(self.base / "missing.txt")
+        except (OSError, NotImplementedError):
+            self.skipTest("symlink creation unavailable")
+        with self.assertRaisesRegex(ValueError, "links"):
+            backup.create_backup(agent.ROOT, self.dest)
+
     def test_missing_db_is_recorded_not_fake_restored(self):
         saved = backup.create_backup(agent.ROOT, self.dest)
         info = backup.verify_snapshot(saved)
