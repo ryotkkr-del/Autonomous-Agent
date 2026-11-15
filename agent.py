@@ -1340,6 +1340,20 @@ def show_repairs(job_id):
         print(f"#{r['id']} [{r['status']}] {r['target']}\n  Hypothesis: {r['hypothesis']}\n  Result: {r['outcome']}")
 
 
+def current_run_permissions(job_id):
+    """Read committed permissions in a fresh connection at the tool boundary."""
+    with sqlite3.connect(DB,timeout=10) as fresh:
+        fresh.row_factory=sqlite3.Row
+        job=fresh.execute('SELECT status,allow_tests,allow_git FROM jobs WHERE id=?',(job_id,)).fetchone()
+        if job is None: raise ValueError('job no longer exists')
+        pref=fresh.execute('SELECT allow_search FROM agent_preferences WHERE job_id=?',(job_id,)).fetchone()
+        urls={r['url'] for r in fresh.execute('SELECT url FROM approved_urls WHERE job_id=?',(job_id,))}
+        ctrl=fresh.execute('SELECT approval_required FROM job_controls WHERE job_id=?',(job_id,)).fetchone()
+        return {'status':job['status'],'allow_tests':bool(job['allow_tests']),
+                'allow_git':bool(job['allow_git']) and not bool(ctrl and ctrl['approval_required']),
+                'allow_search':bool(pref and pref['allow_search']),'approved_urls':urls}
+
+
 def run(job_id,model,budget=8,codex=False):
     if not 1<=budget<=100: raise ValueError('--steps must be from 1 to 100')
     ensure_workspace()
@@ -1368,6 +1382,13 @@ def run(job_id,model,budget=8,codex=False):
               for _ in range(min(budget,MAX_JOB_STEPS-job['steps'])):
                   if (ROOT/'STOP').exists():
                       update_status(db,job_id,'paused','STOP file detected'); print('Paused: STOP'); return
+                  before_decision=current_run_permissions(job_id)
+                  if before_decision['status']!='running':
+                      print('Paused: job status changed during execution'); return
+                  allow_tests=before_decision['allow_tests']
+                  allow_git=before_decision['allow_git']
+                  allow_search=before_decision['allow_search']
+                  approved_urls=before_decision['approved_urls']
                   h=history(db,job_id)
                   # Periodic review of priorities, without rewriting old outcomes.
                   current_steps=db.execute('SELECT steps FROM jobs WHERE id=?',(job_id,)).fetchone()['steps']
@@ -1385,6 +1406,18 @@ def run(job_id,model,budget=8,codex=False):
                       # Preserve older integrations with the v0.6 decision signature.
                       if not any(k in str(exc) for k in ('repairs','board','diagnoses')): raise
                       a=decide(goal,plan,h,model,approved_urls,allow_git,allow_tests)
+                  # Recheck after long model inference. Access revocation or STOP
+                  # must take effect before executing the next external operation.
+                  if (ROOT/'STOP').exists():
+                      update_status(db,job_id,'paused','STOP file detected before action')
+                      print('Paused: STOP before action'); return
+                  live=current_run_permissions(job_id)
+                  if live['status']!='running':
+                      print('Paused: job status changed before action'); return
+                  allow_tests=live['allow_tests']
+                  allow_git=live['allow_git']
+                  allow_search=live['allow_search']
+                  approved_urls=live['approved_urls']
                   if a['action']=='finish':
                       if draft:
                           proposed=db.execute("SELECT path,content FROM pending_changes WHERE job_id=? AND state='pending'",
