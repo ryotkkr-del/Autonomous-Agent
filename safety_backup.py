@@ -92,7 +92,13 @@ def _file_sha256(path: Path) -> tuple[str, int]:
 
 
 def _snapshot_sqlite(source: Path, dest: Path) -> bool:
-    if not source.exists():
+    try:
+        source.lstat()
+    except FileNotFoundError:
+        # Orphaned WAL/journal files mean this is not a proven empty state.
+        if any(os.path.lexists(str(source) + suffix)
+               for suffix in ("-wal", "-shm", "-journal")):
+            raise ValueError("SQLite database missing but WAL/journal files remain")
         return False
     _check_tree_path(source)
     if not source.is_file():
@@ -250,7 +256,7 @@ def create_backup(root: Path, backup_root: Path, revision: str = "") -> Path:
                 files["state.sqlite3"] = {"sha256": digest, "bytes": size}
             for name in DATA_DIRS:
                 source = root / name
-                if source.exists() or source.is_symlink():
+                if os.path.lexists(source):
                     _copy_tree(source, draft / name, files)
             if len(files) > MAX_FILES or sum(x["bytes"] for x in files.values()) > MAX_TOTAL_BYTES:
                 raise ValueError("backup exceeds global safety limits")
