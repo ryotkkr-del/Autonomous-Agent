@@ -1100,6 +1100,9 @@ def main():
     cr.add_argument('--contains',action='append',default=[],metavar='PATH::TEXT')
     t=sub.add_parser('tick');t.add_argument('--steps',type=int,default=8);t.add_argument('--model',default=MODEL)
     safe=sub.add_parser('safety');safe.add_argument('job_id',type=int,nargs='?')
+    sub.add_parser('sandbox-status')
+    prep=sub.add_parser('sandbox-prepare')
+    prep.add_argument('--confirm',action='store_true',help='explicitly approve downloading the official Python image from Docker Hub')
     sub.add_parser('status');sub.add_parser('doctor');sub.add_parser('stop');sub.add_parser('clear-stop')
     a=parser.parse_args();ensure_workspace()
     if a.command=='new': print('Created job #',make_job(a.goal))
@@ -1128,6 +1131,12 @@ def main():
     elif a.command=='safety': print(json.dumps(safety_summary(a.job_id),ensure_ascii=False,indent=2))
     elif a.command=='tick': tick(a.model,a.steps)
     elif a.command=='status': show_jobs()
+    elif a.command=='sandbox-status':
+        import sandbox_runner
+        print(json.dumps(sandbox_runner.setup_diagnosis(),ensure_ascii=False,indent=2))
+    elif a.command=='sandbox-prepare':
+        import sandbox_runner
+        print(sandbox_runner.prepare_image(confirmed=a.confirm))
     elif a.command=='doctor': doctor()
     elif a.command=='stop': (ROOT/'STOP').touch();print('STOP created')
     elif a.command=='clear-stop': (ROOT/'STOP').unlink(missing_ok=True);print('STOP removed')
