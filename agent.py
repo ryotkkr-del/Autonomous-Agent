@@ -700,7 +700,9 @@ def safety_summary(job_id=None):
             'Git checkpoints refuse common secret-like filenames but cannot detect embedded credentials in normal files; no automatic remote push.',
             'Web search sends query text to Bing; approved URL requests send traffic to external websites.',
             'Automatic scheduled runs require manual opt-in and run while your PC/account is available.',
-            'The model can generate wrong or destructive content within its allowed workspace.',
+            'New jobs require explicit approval for AI file writes; older jobs must enable protect-job to get the same guarantee.',
+            'Protected jobs disable AI Git checkpoints and Codex direct execution; these operations are not inside the Docker test sandbox.',
+            'The model can still make mistakes in plans and external search requests.',
         ],
         'guidance':'Do not enable tests for unreviewed AI-generated code. For untrusted code use a separate Windows Sandbox/VM, non-admin account and backups.',
     }
@@ -1083,7 +1085,11 @@ def run(job_id,model,budget=8,codex=False):
                           # direct host write.
                           result=result
                       else:
-                          try: result=execute(a,allow_tests=allow_tests,allow_git=allow_git,approved_urls=approved_urls,allow_search=allow_search)
+                          try:
+                              if approval_enabled(db,job_id) and a['action']=='git_checkpoint':
+                                  result='ERROR: Git checkpoint is disabled for protected jobs; review edits before any Git history'
+                              else:
+                                  result=execute(a,allow_tests=allow_tests,allow_git=allow_git,approved_urls=approved_urls,allow_search=allow_search)
                           except (OSError,UnicodeError,ValueError) as exc: result='ERROR: '+str(exc)
                       if before_fp is not None and result.startswith('WROTE'):
                           register_repair(db,job_id,a,before_fp,workspace_fingerprint())
@@ -1129,6 +1135,8 @@ def codex_job(job_id,confirm=False):
       with connection() as db:
         job=db.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
         if not job: raise ValueError('unknown job')
+        if approval_enabled(db,job_id):
+            raise ValueError('Codex direct execution is disabled for protected jobs; it bypasses the file review gate')
         if job['codex_used']: raise ValueError('Codex already used for this job')
         if not job['plan']: raise ValueError('run Ollama planning first')
         codex_exe=shutil.which('codex')
