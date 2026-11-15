@@ -48,9 +48,8 @@ class DockerIntegrationTests(unittest.TestCase):
                             "content":"def double(x): return x*2\\n","reason":"source"})
                         second=agent.draft_action(db,jobid,{
                             "action":"write_file","path":"tests/test_calc.py",
-                            "content":"import unittest\\nimport calc\\nclass Example(unittest.TestCase):\\n def test_double(self): self.assertEqual(calc.double(3),6)\\n",
+                            "content":"import unittest,runpy\\nclass Example(unittest.TestCase):\\n def test_double(self): self.assertEqual(runpy.run_path('/workspace/calc.py')['double'](3),6)\\n",
                             "reason":"test"})
-                        # The test import relies on /workspace as a package lookup.
                         result=agent.draft_action(db,jobid,{"action":"run_tests","path":"",
                             "content":"","reason":"verify"},allow_tests=True)
                 self.assertIn("DRAFT SAVED",first)
