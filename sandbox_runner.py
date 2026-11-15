@@ -13,6 +13,7 @@ from pathlib import Path
 import secrets
 import shutil
 import subprocess
+import tempfile
 
 IMAGE = "python:3.11-slim"
 CONTAINER_TIMEOUT = 45
@@ -67,6 +68,12 @@ def command(workspace, container_name):
     cli = shutil.which("docker")
     if not cli:
         raise RuntimeError("Docker CLI missing")
+    if os.name == "nt":
+        user = "65534:65534"
+    elif hasattr(os, "getuid") and os.getuid() != 0:
+        user = f"{os.getuid()}:{os.getgid()}"
+    else:
+        user = "65534:65534"
     return [
         cli, "run", "--rm", "--name", container_name,
         "--pull", "never",
@@ -77,7 +84,7 @@ def command(workspace, container_name):
         "--pids-limit", "64",
         "--memory", "512m", "--memory-swap", "512m",
         "--cpus", "1",
-        "--user", "65534:65534",
+        "--user", user,
         "--mount", f"type=bind,source={folder},target=/workspace,readonly",
         "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=64m,mode=1777",
         "--workdir", "/workspace",
@@ -88,6 +95,41 @@ def command(workspace, container_name):
         "python", "-I", "-m", "unittest", "discover",
         "-s", "/workspace/tests", "-p", "test*.py",
     ]
+
+
+
+def snapshot_workspace(source, destination, max_files=200, max_bytes=10_000_000):
+    """Stage a read-only copy without symlinks, special files or Git internals."""
+    root=Path(source).resolve(strict=True)
+    target=Path(destination)
+    count=0
+    total=0
+    for p in root.rglob("*"):
+        rel=p.relative_to(root)
+        if ".git" in rel.parts:
+            continue
+        if p.is_symlink():
+            raise ValueError("sandbox snapshot refuses symbolic links")
+        if p.is_dir():
+            continue
+        if not p.is_file():
+            raise ValueError("sandbox snapshot refuses special files")
+        if any(x.startswith(".") for x in rel.parts) or p.name.endswith((".agent-backup", ".agent-tmp")):
+            continue
+        count+=1
+        total+=p.stat().st_size
+        if count>max_files or total>max_bytes:
+            raise ValueError("sandbox workspace exceeds snapshot size limits")
+        copy_to=target/rel
+        copy_to.parent.mkdir(parents=True,exist_ok=True)
+        shutil.copyfile(p,copy_to)
+    if count==0:
+        raise ValueError("sandbox workspace has no regular files")
+    if os.name!="nt" and hasattr(os,"getuid") and os.getuid()==0:
+        for directory in [target,*[p for p in target.rglob("*") if p.is_dir()]]:
+            directory.chmod(0o755)
+        for file in (p for p in target.rglob("*") if p.is_file()):
+            file.chmod(0o644)
 
 
 def _cleanup(container_name):
@@ -109,16 +151,18 @@ def run_tests(workspace, timeout=CONTAINER_TIMEOUT):
         return "ERROR: sandbox unavailable: " + reason
     name = CONTAINER_PREFIX + secrets.token_hex(10)
     try:
-        cmd = command(workspace, name)
-        result = subprocess.run(
-            cmd, capture_output=True, text=True,
-            timeout=timeout, check=False, errors="replace",
-        )
-        output = (result.stdout + "\n" + result.stderr)[-MAX_OUTPUT:]
-        import re
-        if result.returncode == 0 and re.search(r"Ran\s+[1-9]\d*\s+tests?", output):
-            return "TEST PASS [Docker sandbox]\n" + output
-        return f"ERROR: sandbox tests failed or none found (exit={result.returncode})\n" + output
+        with tempfile.TemporaryDirectory(prefix="agent-sandbox-snapshot-") as stage:
+            snapshot_workspace(workspace, stage)
+            cmd = command(stage, name)
+            result = subprocess.run(
+                cmd, capture_output=True, text=True,
+                timeout=timeout, check=False, errors="replace",
+            )
+            output = (result.stdout + "\n" + result.stderr)[-MAX_OUTPUT:]
+            import re
+            if result.returncode == 0 and re.search(r"Ran\s+[1-9]\d*\s+tests?", output):
+                return "TEST PASS [Docker sandbox]\n" + output
+            return f"ERROR: sandbox tests failed or none found (exit={result.returncode})\n" + output
     except subprocess.TimeoutExpired:
         return f"ERROR: sandbox test timed out after {timeout}s"
     except (OSError, ValueError, RuntimeError) as exc:
