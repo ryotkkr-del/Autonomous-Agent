@@ -7,6 +7,8 @@ code, existing jobs, permissions, or workspace artifacts. No auto-approval.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
+import uuid
 import hashlib
 import json
 from pathlib import Path
@@ -64,7 +66,7 @@ def main(argv=None):
     p.add_argument("--steps",type=int,default=14)
     p.add_argument("--trials",type=int,default=2)
     p.add_argument("--scenarios",default="note,json,python")
-    p.add_argument("--output-dir",type=Path,default=Path("benchmark-results/experiment"))
+    p.add_argument("--output-dir",type=Path,default=None)
     args=p.parse_args(argv)
     if not args.confirm:
         print("ERROR: explicit --confirm is required for the two full Ollama runs",file=sys.stderr)
@@ -76,7 +78,9 @@ def main(argv=None):
         p.error("steps must be 1-50 and trials 1-5")
     try:
         note=read_instruction(args.instruction_file)
-        output_dir=args.output_dir.resolve()
+        output_dir=(args.output_dir or (Path("benchmark-results")/"experiments"/
+                    (datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")+
+                     "-"+uuid.uuid4().hex[:8]))).resolve()
         target_names=("baseline.json","candidate.json","comparison.json")
         destinations=[output_dir/name for name in target_names]
         # Refuse collisions before costly model evaluation; never replace
@@ -99,7 +103,7 @@ def main(argv=None):
     print("Baseline:",f"{baseline['summary']['passed']}/{baseline['summary']['total']}")
     print("Candidate:",f"{candidate['summary']['passed']}/{candidate['summary']['total']}")
     print("Difference:",f"{comparison['rate_delta']:+.1%}")
-    print("Results:",args.output_dir)
+    print("Results:",output_dir)
     print("No production prompt or agent code was changed.")
     return 0
 
