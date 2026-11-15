@@ -1613,6 +1613,11 @@ def main():
     cr.add_argument('--contains',action='append',default=[],metavar='PATH::TEXT')
     t=sub.add_parser('tick');t.add_argument('--steps',type=int,default=8);t.add_argument('--model',default=MODEL)
     safe=sub.add_parser('safety');safe.add_argument('job_id',type=int,nargs='?')
+    real_bench=sub.add_parser('benchmark-real',help='explicit, isolated real-Ollama benchmark')
+    real_bench.add_argument('--model',default='gemma3:4b')
+    real_bench.add_argument('--steps',type=int,default=14)
+    real_bench.add_argument('--trials',type=int,default=1)
+    real_bench.add_argument('--scenarios',default='note,json,python')
     sub.add_parser('sandbox-status')
     prep=sub.add_parser('sandbox-prepare')
     prep.add_argument('--confirm',action='store_true',help='explicitly approve downloading the official Python image from Docker Hub')
@@ -1654,6 +1659,11 @@ def main():
     elif a.command=='safety': print(json.dumps(safety_summary(a.job_id),ensure_ascii=False,indent=2))
     elif a.command=='tick': tick(a.model,a.steps)
     elif a.command=='status': show_jobs()
+    elif a.command=='benchmark-real':
+        from benchmarks.real_ollama import main as run_real_benchmark
+        args=['--model',a.model,'--steps',str(a.steps),'--trials',str(a.trials),
+              '--scenarios',a.scenarios]
+        raise SystemExit(run_real_benchmark(args))
     elif a.command=='sandbox-status':
         import sandbox_runner
         print(json.dumps(sandbox_runner.setup_diagnosis(),ensure_ascii=False,indent=2))
