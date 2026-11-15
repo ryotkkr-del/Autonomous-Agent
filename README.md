@@ -1,4 +1,4 @@
-# Autonomous Agent v1.7
+# Autonomous Agent v1.8
 
 Windows用のローカル自律AIエージェント。**GitHubの`main`にアプリ本体とGUIを公開済み**です。既存のv1.1以前のコード・SQLiteデータ形式を引き継いでいます。
 
@@ -392,3 +392,24 @@ Dockerランナーは、作業フォルダから通常ファイルだけを使�
 
 `python -m unittest discover -s tests -v` はプロジェクト自身の**信頼済み開発用テスト**であり、生成コードの隔離ルートではありません。実環境の隔離確認はGitHub Actions `Docker sandbox integration` で行います。
 
+
+## v1.8 — Docker初期設定をGUIとCLIから案内
+
+GUIに「**Docker環境を診断**」「**Pythonイメージを準備**」「**Docker公式サイト**」を追加しました。
+診断とダウンロードはバックグラウンドの子プロセスで実行するため、Tkinterの操作スレッドを塞ぎません。
+
+- **Docker環境を診断**：Docker CLI、Docker Desktop/Engine、コンテナモード、ローカル接続、必要なPythonイメージを調べ、次に必要な操作を日本語で案内します。診断だけではインストール・ダウンロード・設定変更を行いません。
+- **Pythonイメージを準備**：ユーザーの確認後に限り、Docker Hubから固定の公式イメージ `python:3.11-slim` をダウンロードして確認します。Dockerのインストールや起動、Windows/WSLの設定変更は自動実行しません。
+- **Docker公式サイト**：公式ダウンロードページを既定ブラウザで開きます。
+
+### ターミナルでの同等操作
+
+```powershell
+python agent.py sandbox-status
+python agent.py sandbox-prepare --confirm
+python agent.py safety 1
+```
+
+`sandbox-prepare` では `--confirm` が必須です。Docker環境が利用できない場合はエラーで終了し、生成されたPythonテストをWindowsホストで直接実行することはありません。
+
+**Windows環境での注意：** Docker Desktop/WSL2のインストールと有効化にはPC側の操作が必要です。今回のCIはWindows上でのGUIヘルパーとDocker診断ロジックの単体テスト、およびLinuxでの実Docker隔離テストです。ユーザー本人のWindows PCへのDockerインストールや実起動を遠隔実施したものではありません。
