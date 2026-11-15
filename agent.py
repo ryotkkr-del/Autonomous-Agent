@@ -1418,7 +1418,7 @@ def doctor():
     except Exception: print('Ollama: not reachable')
 
 def main():
-    parser=argparse.ArgumentParser(description='Autonomous Agent v2.0 — reviewed edits and sandboxed tests')
+    parser=argparse.ArgumentParser(description='Autonomous Agent v2.1 — reviewed edits, snapshots and rollback')
     sub=parser.add_subparsers(dest='command',required=True)
     n=sub.add_parser('new');n.add_argument('goal')
     for command in ('protect-job','pending'):
