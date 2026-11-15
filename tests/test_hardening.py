@@ -70,6 +70,18 @@ class WorkspaceHardeningTests(unittest.TestCase):
             for filename in ['credentials.json','api_token.txt','.env','private.pdf']:
                 self.assertFalse((Path(destination)/filename).exists())
 
+    def test_git_refuses_secret_filename_before_initializing_repository(self):
+        (agent.WORKSPACE/'credentials.json').write_text('key',encoding='utf-8')
+        result=agent.git_snapshot(True)
+        self.assertTrue(result.startswith('ERROR:'))
+        self.assertIn('sensitive',result)
+        self.assertFalse((agent.WORKSPACE/'.git').exists())
+
+    def test_git_refuses_env_file(self):
+        (agent.WORKSPACE/'.env').write_text('API_KEY=secret',encoding='utf-8')
+        result=agent.git_snapshot(True)
+        self.assertIn('refused',result)
+
     def test_staging_rejects_hardlinked_file(self):
         outside=agent.ROOT/'outside.py'
         outside.write_text('key=1',encoding='utf-8')
