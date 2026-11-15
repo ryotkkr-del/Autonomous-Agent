@@ -47,6 +47,7 @@ MAX_REPAIR_CONTEXT = 6
 MAX_DIAGNOSIS_FAILURE = 4000
 MAX_SEARCH_RESULTS = 5
 REPLAN_EVERY_STEPS = 8
+MAX_STALL_RECOVERIES = 2
 DIAGNOSIS_SCHEMA = {'type':'object','properties':{'hypotheses':{'type':'array','items':{'type':'object','properties':{'cause':{'type':'string'},'evidence':{'type':'string'},'safe_check':{'type':'string'},'priority':{'type':'integer'}},'required':['cause','evidence','safe_check','priority']}}},'required':['hypotheses']}
 
 RULES = '''あなたはローカル作業エージェント。最小限の操作で目標を達成する。
@@ -101,6 +102,10 @@ def connection():
     db.execute('''CREATE TABLE IF NOT EXISTS agent_preferences (job_id INTEGER PRIMARY KEY, allow_search INTEGER NOT NULL DEFAULT 0)''')
     db.execute('''CREATE TABLE IF NOT EXISTS plan_revisions (id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL, created TEXT NOT NULL, plan TEXT NOT NULL, explanation TEXT NOT NULL)''')
     db.execute('''CREATE TABLE IF NOT EXISTS diagnoses (id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL, created TEXT NOT NULL, failure_signature TEXT NOT NULL, proposals TEXT NOT NULL, evidence TEXT NOT NULL)''')
+    db.execute('''CREATE TABLE IF NOT EXISTS job_controls (
+       job_id INTEGER PRIMARY KEY, criteria TEXT NOT NULL DEFAULT '{}',
+       stall_recoveries INTEGER NOT NULL DEFAULT 0,
+       failures INTEGER NOT NULL DEFAULT 0, retry_after TEXT NOT NULL DEFAULT '')''')
     try: yield db; db.commit()
     finally: db.close()
 
@@ -606,6 +611,76 @@ def review(goal,plan,history,model):
         '\n成果物が存在するだけでなく、目標達成の根拠を確認し、complete/ reason/ missing を返す。'}],REVIEW_SCHEMA,model)
     if response.get('complete') is not True: return False,str(response.get('reason','verification failed'))[:500]
     return True,str(response.get('reason','verified'))[:500]
+
+
+def set_criteria(job_id, required_files=(), contains=()):
+    """Define deterministic, workspace-only checks required to finish a job."""
+    checks=[]
+    for filename in required_files:
+        if not filename: raise ValueError('empty file path')
+        checks.append({'type':'file','path':filename})
+    for item in contains:
+        if '::' not in item: raise ValueError('text criteria must be path::required_text')
+        filename,needle=item.split('::',1)
+        if not filename or not needle or len(needle)>1000: raise ValueError('invalid required text')
+        checks.append({'type':'contains','path':filename,'text':needle})
+    if len(checks)>25: raise ValueError('too many acceptance checks')
+    with connection() as db:
+        job=db.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+        if not job: raise ValueError('unknown job')
+        with job_workspace(job):
+            for check in checks: safe_path(check['path'])
+        db.execute('INSERT INTO job_controls(job_id,criteria) VALUES(?,?) ON CONFLICT(job_id) DO UPDATE SET criteria=excluded.criteria',
+                   (job_id,json.dumps({'checks':checks},ensure_ascii=False)))
+    print('Acceptance checks saved:',len(checks))
+
+
+def acceptance_check(db,job_id):
+    row=db.execute('SELECT criteria FROM job_controls WHERE job_id=?',(job_id,)).fetchone()
+    criteria=json.loads(row['criteria']) if row else {}
+    for check in criteria.get('checks',[]):
+        path=safe_path(check['path'])
+        if not path.is_file() or path.stat().st_size==0:
+            return False,'成功条件を満たすファイルがありません: '+check['path']
+        if check['type']=='contains' and check['text'] not in path.read_text(encoding='utf-8',errors='replace'):
+            return False,'成功条件の内容が見つかりません: '+check['path']
+    return True,'acceptance checks passed'
+
+
+def recover_stall(db,job_id,goal,plan,model,reason):
+    """Bounded replanning, without deleting saved outcomes."""
+    row=db.execute('SELECT stall_recoveries FROM job_controls WHERE job_id=?',(job_id,)).fetchone()
+    if row and row['stall_recoveries']>=MAX_STALL_RECOVERIES: return None
+    db.execute('INSERT OR IGNORE INTO job_controls(job_id) VALUES(?)',(job_id,))
+    db.execute('UPDATE job_controls SET stall_recoveries=stall_recoveries+1 WHERE job_id=?',(job_id,))
+    db.commit()
+    try:
+        revised=revise_plan(db,job_id,goal,plan,model,'stall recovery: '+reason[:150])
+        record(db,job_id,{'action':'replan_recovery','path':'','content':'','reason':reason},
+               'RECOVERY: alternative plan requested after stall')
+        return revised
+    except Exception as exc:
+        record(db,job_id,{'action':'replan_recovery','path':'','content':'','reason':reason},
+               'RECOVERY FAILED: '+str(exc)[:300])
+        return None
+
+
+def note_run_failure(db,job_id):
+    """Exponential backoff for scheduled retries; manual runs are unrestricted."""
+    from datetime import timedelta
+    db.execute('INSERT OR IGNORE INTO job_controls(job_id) VALUES(?)',(job_id,))
+    db.execute('UPDATE job_controls SET failures=MIN(failures+1,8) WHERE job_id=?',(job_id,))
+    failures=db.execute('SELECT failures FROM job_controls WHERE job_id=?',(job_id,)).fetchone()['failures']
+    delay=min(3600,60*(2**min(failures,6)))
+    retry=(datetime.now(timezone.utc)+timedelta(seconds=delay)).isoformat(timespec='seconds')
+    db.execute('UPDATE job_controls SET retry_after=? WHERE job_id=?',(retry,job_id))
+    db.commit()
+
+
+def clear_run_failure(db,job_id):
+    db.execute("UPDATE job_controls SET failures=0,retry_after='' WHERE job_id=?",(job_id,))
+    db.commit()
+
 
 def make_job(goal):
     with connection() as db:
