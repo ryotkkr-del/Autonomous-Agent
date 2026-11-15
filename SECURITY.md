@@ -97,3 +97,13 @@ CIではLinux/Windows × Python 3.11/3.13のユニットテスト、Linux Docker
 Remaining risk: this is not a full OS sandbox. Races involving other local processes, Windows reparse points, credentials embedded inside ordinary source files, and bugs in the OS, TLS or Docker runtime are still possible. Use a standard user account, avoid sensitive files, and keep independent backups.
 
 Git command hardening: Git status now requires explicit `allow_git`; protected jobs deny Git status and checkpoints. Git subprocess invocations disable `core.fsmonitor`, external diff and credential helpers. These are reductions in attack surface rather than guarantees for a malicious Git installation or repository.
+
+## P0-4 phase 1 — fail-closed launch and independent signed-tag verification
+
+- `sync.ps1 -Launch` does not fetch or merge GitHub `main`. Both the legacy `更新して起動.bat` and `安全に起動.bat` start installed local code without automatic updates.
+- `開発版を更新して起動.bat` is strictly for development. It checks expected origin, `main`, and a clean tracked working tree, requires the exact interactive phrase `DEV-UPDATE`, and allows only a fast-forward merge. **This does not make development commits production safe.**
+- `sync.ps1 -CheckReleaseTag vX.Y.Z` is a *verification-only* operation; it fetches the named Git tag and runs `release_policy.py`, which rejects nonannotated tags, failed GPG verification, unknown signers, missing external trust configuration, and malformed tag names. It does not install code.
+- The allowed maintainer signing-key fingerprints must be independently validated and stored outside the Git checkout. Copying a fingerprint from the same compromised repository is not independent authentication.
+- Windows PowerShell 5.1 requires UTF-8 BOM for non-ASCII script messages; the updater is saved with BOM and the Windows CI smoke test checks the safe default execution path.
+
+**Unfinished release security:** No official automatically installed trusted release path exists yet. Release artifacts, signed manifests, CI pass verification, archive integrity, old-version rollback, and end-to-end Windows 11 verification remain P0-4 requirements. The first manual bootstrap from older copies is still a developer-controlled action, not a verified production upgrade. Full operating-system isolation is not provided.
