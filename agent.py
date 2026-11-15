@@ -859,6 +859,12 @@ def run(job_id,model,budget=8,codex=False):
                               sig=record(db,job_id,a,result)
                               print('[auto_tests] ->',test_result[:300],flush=True)
                               continue
+                      checks_ok,checks_reason=acceptance_check(db,job_id)
+                      if not checks_ok:
+                          record(db,job_id,{'action':'review_failed','path':'','content':'','reason':checks_reason},
+                                 'REVIEW FAILED: '+checks_reason)
+                          print('Acceptance check failed:',checks_reason,flush=True)
+                          continue
                       ok,reason=review(goal,plan,all_history,model)
                       if ok:
                           record(db,job_id,a,'VERIFIED: '+reason)
@@ -875,17 +881,27 @@ def run(job_id,model,budget=8,codex=False):
                       if a['action']=='run_tests':
                           resolve_repairs(db,job_id,result,workspace_fingerprint())
                   sig=record(db,job_id,a,result)
+                  if not result.startswith(('ERROR:','REVIEW FAILED:')): clear_run_failure(db,job_id)
                   print(f"[{a['action']}] {a['path'][:80]} -> {result[:220]}",flush=True)
                   if result.startswith(('ERROR:','REVIEW FAILED:')): errors+=1
                   else: errors=0
                   # Check the last 4 results, across resumed runs, not only within this invocation.
                   recent=history(db,job_id,MAX_ERRORS)
                   if len(recent)>=MAX_ERRORS and all(r['result'].startswith(('ERROR:','REVIEW FAILED:')) for r in recent):
+                      recovered=recover_stall(db,job_id,goal,plan,model,'4 consecutive errors')
+                      if recovered is not None:
+                          plan=recovered; errors=0; continue
                       update_status(db,job_id,'blocked','4 consecutive errors across runs'); print('Blocked: too many errors'); return
                   signatures=[r['signature'] for r in history(db,job_id,5)]
                   if len(signatures)>=3 and len(set(signatures[-3:]))==1:
+                      recovered=recover_stall(db,job_id,goal,plan,model,'same action repeated 3 times')
+                      if recovered is not None:
+                          plan=recovered; errors=0; continue
                       update_status(db,job_id,'blocked','same action repeated 3 times'); print('Blocked: repeated actions'); return
                   if errors>=MAX_ERRORS:
+                      recovered=recover_stall(db,job_id,goal,plan,model,'4 errors this run')
+                      if recovered is not None:
+                          plan=recovered; errors=0; continue
                       update_status(db,job_id,'blocked','4 consecutive errors'); print('Blocked: too many errors'); return
               # Deliberate policy: local work pauses at budget; Codex is opt-in and never auto-spent.
               update_status(db,job_id,'paused','step budget reached')
@@ -894,6 +910,7 @@ def run(job_id,model,budget=8,codex=False):
           except KeyboardInterrupt:
               update_status(db,job_id,'paused','keyboard interruption'); print('Paused by user')
           except Exception as exc:
+              note_run_failure(db,job_id)
               update_status(db,job_id,'paused','ERROR: '+str(exc)[:500]); raise
 
 def codex_job(job_id,confirm=False):
@@ -929,10 +946,16 @@ def tick(model=MODEL,steps=8):
     if (ROOT/'STOP').exists():
         print('Global STOP is present; skipping scheduled run');return
     with connection() as db:
-        r=db.execute("SELECT id FROM jobs WHERE status IN ('paused','running') AND steps<? ORDER BY updated ASC,id ASC LIMIT 1",(MAX_JOB_STEPS,)).fetchone()
+        r=db.execute("""SELECT j.id FROM jobs j LEFT JOIN job_controls c ON c.job_id=j.id
+            WHERE j.status IN ('paused','running') AND j.steps<?
+            AND (c.retry_after IS NULL OR c.retry_after='' OR c.retry_after<=?)
+            ORDER BY j.updated ASC,j.id ASC LIMIT 1""",(MAX_JOB_STEPS,now())).fetchone()
     if r is None:print('No pending jobs');return
     print('Scheduled tick: job #',r['id'])
-    run(r['id'],model,steps)
+    try:
+        run(r['id'],model,steps)
+    except Exception as exc:
+        print('Scheduled run failed; retry will be delayed:',str(exc)[:200])
 
 
 def show_jobs():
@@ -1022,7 +1045,7 @@ def doctor():
     except Exception: print('Ollama: not reachable')
 
 def main():
-    parser=argparse.ArgumentParser(description='Autonomous Agent v1.3 — replan, web search and code edits')
+    parser=argparse.ArgumentParser(description='Autonomous Agent v1.4 — acceptance checks and bounded recovery')
     sub=parser.add_subparsers(dest='command',required=True)
     n=sub.add_parser('new');n.add_argument('goal')
     r=sub.add_parser('run');r.add_argument('job_id',type=int);r.add_argument('--steps',type=int,default=8)
@@ -1037,6 +1060,9 @@ def main():
     rep=sub.add_parser('replan');rep.add_argument('job_id',type=int);rep.add_argument('--model',default=MODEL)
     d=sub.add_parser('diagnose');d.add_argument('job_id',type=int);d.add_argument('--model',default=MODEL)
     task=sub.add_parser('task');task.add_argument('job_id',type=int);task.add_argument('idx',type=int);task.add_argument('--priority',type=int);task.add_argument('--state',choices=['todo','doing','done','blocked']);task.add_argument('--note')
+    cr=sub.add_parser('criteria');cr.add_argument('job_id',type=int)
+    cr.add_argument('--file',action='append',default=[])
+    cr.add_argument('--contains',action='append',default=[],metavar='PATH::TEXT')
     t=sub.add_parser('tick');t.add_argument('--steps',type=int,default=8);t.add_argument('--model',default=MODEL)
     sub.add_parser('status');sub.add_parser('doctor');sub.add_parser('stop');sub.add_parser('clear-stop')
     a=parser.parse_args();ensure_workspace()
@@ -1061,6 +1087,7 @@ def main():
     elif a.command=='task': update_task(a.job_id,a.idx,a.priority,a.state,a.note)
     elif a.command=='diagnose': diagnose(a.job_id,a.model)
     elif a.command=='diagnoses': show_diagnoses(a.job_id)
+    elif a.command=='criteria': set_criteria(a.job_id,a.file,a.contains)
     elif a.command=='tick': tick(a.model,a.steps)
     elif a.command=='status': show_jobs()
     elif a.command=='doctor': doctor()
