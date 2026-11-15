@@ -47,7 +47,9 @@ class V05Tests(unittest.TestCase):
         (agent.WORKSPACE/'output.txt').write_text('B',encoding='utf-8')
         out=agent.execute({'action':'git_checkpoint','path':'','content':'','reason':''},allow_git=True)
         self.assertTrue(out.startswith('GIT CHECKPOINT:'),out)
-        status=agent.execute({'action':'git_status','path':'','content':'','reason':''})
+        blocked=agent.execute({'action':'git_status','path':'','content':'','reason':''})
+        self.assertIn('disabled',blocked.lower())
+        status=agent.execute({'action':'git_status','path':'','content':'','reason':''},allow_git=True)
         self.assertEqual(status.strip(),'GIT STATUS:')
 
     def test_decider_receives_permissions_and_url_allowlist(self):
