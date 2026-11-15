@@ -518,6 +518,9 @@ def _validate_local_ollama_url(url):
         addresses=socket.getaddrinfo('localhost',parts.port,type=socket.SOCK_STREAM)
         if not addresses or any(not ipaddress.ip_address(item[4][0]).is_loopback for item in addresses):
             raise ValueError('localhost must resolve only to loopback addresses')
+        # Pin the actual connection to a numeric loopback address too; do not
+        # trust a second DNS lookup performed later by the HTTP client.
+        return f'http://127.0.0.1:{parts.port}/api/chat'
     return url
 
 
@@ -1653,7 +1656,8 @@ def doctor():
     print('Python:',sys.version.split()[0]); print('Workspace:',WORKSPACE)
     print('Model:',MODEL);print('Codex CLI:',shutil.which('codex') or 'not installed')
     try:
-        with urllib.request.urlopen('http://127.0.0.1:11434/api/tags',timeout=3) as r:
+        opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())
+        with opener.open('http://127.0.0.1:11434/api/tags',timeout=3) as r:
             models=[m.get('name') for m in json.load(r).get('models',[])]
         print('Ollama: connected; models:',', '.join(models) or '(none)')
     except Exception: print('Ollama: not reachable')
