@@ -12,6 +12,8 @@ import difflib
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
+import http.client
+import ssl
 import json
 import os
 from pathlib import Path
@@ -256,45 +258,75 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         raise ValueError('redirects not allowed; approve the final URL explicitly')
 
 
-def validate_public_https(url):
-    """Basic SSRF defense. Do not treat this as an OS/network isolation boundary."""
+def _verified_public_endpoint(url):
+    """Validate a public HTTPS destination and resolve its IP exactly once."""
     if not isinstance(url,str) or len(url)>2000 or any(ord(c)<33 for c in url):
         raise ValueError('invalid URL')
     parts=urllib.parse.urlsplit(url)
-    if parts.scheme!='https' or not parts.hostname or parts.username or parts.password or parts.port not in (None,443):
-        raise ValueError('only public HTTPS URLs without credentials or custom ports')
-    if parts.fragment: raise ValueError('URL fragments are unsupported')
+    if (parts.scheme!='https' or not parts.hostname or parts.username or parts.password
+            or parts.port not in (None,443) or parts.fragment):
+        raise ValueError('only public HTTPS URLs without credentials, fragments or custom ports')
     if not parts.hostname.isascii(): raise ValueError('hostname must be ASCII / IDNA')
     hostname=parts.hostname.rstrip('.').lower()
-    if hostname=='localhost' or hostname.endswith(('.local','.internal','.localhost')):
+    if (hostname=='localhost' or hostname.endswith(('.local','.internal','.localhost'))
+            or not hostname or len(hostname)>253):
         raise ValueError('local domains are forbidden')
     try:
         addresses=socket.getaddrinfo(hostname,443,type=socket.SOCK_STREAM)
     except socket.gaierror as exc:
         raise ValueError('hostname lookup failed') from exc
     if not addresses: raise ValueError('no DNS result')
+    verified=[]
     for item in addresses:
         ip=ipaddress.ip_address(item[4][0])
         if not ip.is_global: raise ValueError('private or reserved IP address')
+        verified.append(str(ip))
+    return parts,hostname,verified[0]
+
+
+def validate_public_https(url):
+    """Ensure the destination is a public HTTPS address."""
+    _verified_public_endpoint(url)
     return url
 
 
+def _fetch_public_https(url,headers,limit,timeout=12):
+    """Pin the verified numeric IP, preserving original hostname for TLS/SNI.
+
+    A later DNS answer cannot redirect the connection to a private address.
+    No proxy, redirect following or alternate HTTP origin is supported.
+    """
+    parts,hostname,pinned_ip=_verified_public_endpoint(url)
+    conn=http.client.HTTPSConnection(hostname,443,timeout=timeout,
+                                    context=ssl.create_default_context())
+    def pinned_connect(address,timeout=None,source_address=None):
+        return socket.create_connection((pinned_ip,443),timeout=timeout,
+                                        source_address=source_address)
+    conn._create_connection=pinned_connect
+    try:
+        request_target=(parts.path or '/')+('?' + parts.query if parts.query else '')
+        conn.request('GET',request_target,headers=headers)
+        response=conn.getresponse()
+        received_headers={key.lower():value for key,value in response.getheaders()}
+        return response.status,received_headers,response.read(limit+1)
+    finally:
+        conn.close()
+
 def read_approved_url(url, approved_urls):
     if url not in approved_urls: return 'ERROR: URL not approved. Use approve-url JOB_ID URL first.'
-    validate_public_https(url)
-    opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())
-    req=urllib.request.Request(url,headers={'User-Agent':'AutonomousAgentResearch/0.6','Accept':'text/plain,text/html'})
     try:
-        with opener.open(req,timeout=12) as response:
-            if response.status!=200: return f'ERROR: HTTP {response.status}'
-            ctype=response.headers.get('Content-Type','').lower()
-            if not ('text/html' in ctype or 'text/plain' in ctype): return 'ERROR: only HTML or plain text is supported'
-            if response.headers.get('Content-Length','').isdigit() and int(response.headers['Content-Length'])>MAX_WEB_BYTES:
-                return 'ERROR: page exceeds size limit'
-            payload=response.read(MAX_WEB_BYTES+1)
-            if len(payload)>MAX_WEB_BYTES: return 'ERROR: page exceeds size limit'
-            text=payload.decode('utf-8',errors='replace')
-            if 'text/html' in ctype:
+        status,headers,payload=_fetch_public_https(
+            url,{'User-Agent':'AutonomousAgentResearch/0.6',
+                 'Accept':'text/plain,text/html'},MAX_WEB_BYTES)
+        if status!=200: return f'ERROR: HTTP {status} (redirects refused)'
+        ctype=headers.get('content-type','').lower()
+        if not ('text/html' in ctype or 'text/plain' in ctype): return 'ERROR: only HTML or plain text is supported'
+        length=headers.get('content-length','')
+        if length.isdigit() and int(length)>MAX_WEB_BYTES:
+            return 'ERROR: page exceeds size limit'
+        if len(payload)>MAX_WEB_BYTES: return 'ERROR: page exceeds size limit'
+        text=payload.decode('utf-8',errors='replace')
+        if 'text/html' in ctype:
                 from html.parser import HTMLParser
                 class Extractor(HTMLParser):
                     def __init__(self): super().__init__(); self.skip=0; self.parts=[]
