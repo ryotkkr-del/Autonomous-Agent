@@ -55,11 +55,19 @@ class AgentTests(unittest.TestCase):
     def test_repeats_detected(self):
         job=agent.make_job('test')
         action={'action':'list_files','path':'','content':'','reason':''}
-        with patch.object(agent,'make_plan',return_value={'tasks':['a'],'deliverables':[]}),patch.object(agent,'decide',return_value=action):
-            agent.run(job,'dummy',6)
+        plan={'tasks':['a'],'deliverables':[]}
+        with patch.object(agent,'make_plan',return_value=plan), \
+             patch.object(agent,'decide',return_value=action), \
+             patch.object(agent,'revise_plan',return_value=plan) as revise:
+            agent.run(job,'dummy',12)
         with agent.connection() as db:
-            row=db.execute('SELECT result,steps FROM jobs').fetchone()
-            self.assertIn('repeated',row['result']);self.assertEqual(row['steps'],3)
+            row=db.execute('SELECT result,steps,status FROM jobs').fetchone()
+            guard=db.execute('SELECT stall_recoveries FROM job_controls WHERE job_id=?',(job,)).fetchone()
+            self.assertEqual(row['status'],'blocked')
+            self.assertIn('repeated',row['result'])
+            self.assertGreater(row['steps'],3)
+            self.assertEqual(guard['stall_recoveries'],agent.MAX_STALL_RECOVERIES)
+            self.assertEqual(revise.call_count,agent.MAX_STALL_RECOVERIES)
     def test_tick_selects_pending(self):
         job=agent.make_job('pending')
         with patch.object(agent,'run') as runner:
