@@ -850,7 +850,7 @@ def stage_change(db,job_id,a):
     return c.lastrowid
 
 
-def draft_action(db,job_id,a,allow_tests=False):
+def draft_action(db,job_id,a,allow_tests=False,approved_urls=(),allow_search=False):
     """Run text editing and inspection against a SQLite overlay, never host writes."""
     op=a['action']
     if op in ('write_file','replace_in_file'):
@@ -923,7 +923,7 @@ def draft_action(db,job_id,a,allow_tests=False):
             return 'ERROR: draft test preparation failed: '+str(exc)[:300]
     if op=='git_checkpoint':
         return 'ERROR: Git checkpoint unavailable in virtual draft'
-    return execute(a,allow_tests=False,allow_git=False)
+    return execute(a,allow_tests=False,allow_git=False,approved_urls=approved_urls,allow_search=allow_search)
 
 
 def draft_acceptance_check(db,job_id):
@@ -1259,7 +1259,8 @@ def run(job_id,model,budget=8,codex=False):
         if job['status']=='done': print('Already completed:',job['result']); return
         if job['status']=='awaiting_approval':
             print('A file edit is awaiting human approval. Use pending / change-preview / approve-change.'); return
-        if db.execute("SELECT id FROM pending_changes WHERE job_id=? AND state='pending'",(job_id,)).fetchone():
+        draft=draft_enabled(db,job_id)
+        if not draft and db.execute("SELECT id FROM pending_changes WHERE job_id=? AND state='pending'",(job_id,)).fetchone():
             update_status(db,job_id,'awaiting_approval','pending human file review')
             print('Pending edit must be reviewed before resuming.');return
         if job['status']=='blocked': print('Job is blocked; inspect history then run: python agent.py unblock',job_id); return
@@ -1294,6 +1295,32 @@ def run(job_id,model,budget=8,codex=False):
                       if not any(k in str(exc) for k in ('repairs','board','diagnoses')): raise
                       a=decide(goal,plan,h,model,approved_urls,allow_git,allow_tests)
                   if a['action']=='finish':
+                      if draft:
+                          proposed=db.execute("SELECT path,content FROM pending_changes WHERE job_id=? AND state='pending'",
+                                              (job_id,)).fetchall()
+                          if proposed:
+                              failures=[]
+                              for item in proposed:
+                                  if item['path'].lower().endswith('.py'):
+                                      try: ast.parse(item['content'],filename=item['path'])
+                                      except SyntaxError as exc: failures.append(item['path']+': '+str(exc))
+                              ok,reason=draft_acceptance_check(db,job_id)
+                              if not ok: failures.append(reason)
+                              if allow_tests and not failures:
+                                  test_result=draft_action(db,job_id,{'action':'run_tests','path':'','content':'','reason':'finish gate'},
+                                                           allow_tests=True)
+                                  record(db,job_id,{'action':'auto_tests','path':'','content':'',
+                                                     'reason':'virtual draft'},test_result)
+                                  if not test_result.startswith('TEST PASS'): failures.append(test_result)
+                              if failures:
+                                  record(db,job_id,{'action':'review_failed','path':'','content':'','reason':'draft checks'},
+                                         'REVIEW FAILED: '+'; '.join(failures)[:MAX_CHECK_OUTPUT])
+                                  print('Draft review failed:',str(failures)[:200]);continue
+                              record(db,job_id,a,'DRAFT READY: '+str(len(proposed))+' files require approval')
+                              update_status(db,job_id,'awaiting_approval',
+                                            str(len(proposed))+' staged files waiting for approval')
+                              print('Draft ready for human review:',len(proposed),'files')
+                              return
                       # A deterministic test gate: do not rely on the model choosing run_tests.
                       # Only run executable tests after explicit per-job opt-in.
                       all_history=history(db,job_id,MAX_JOB_STEPS)
@@ -1340,6 +1367,20 @@ def run(job_id,model,budget=8,codex=False):
                       a={'action':'review_failed','path':'','content':'','reason':reason}
                       result='REVIEW FAILED: '+reason
                   else:
+                      if draft:
+                          try: result=draft_action(db,job_id,a,allow_tests=allow_tests,
+                                                   approved_urls=approved_urls,allow_search=allow_search)
+                          except (OSError,UnicodeError,ValueError,TypeError) as exc:
+                              result='ERROR: draft action failed: '+str(exc)[:300]
+                          record(db,job_id,a,result)
+                          print(f"[draft {a['action']}] {a['path'][:80]} -> {result[:180]}",flush=True)
+                          if result.startswith('ERROR:'): errors+=1
+                          else: errors=0
+                          if errors>=MAX_ERRORS:
+                              update_status(db,job_id,'blocked','4 draft errors')
+                              print('Draft blocked after repeated errors')
+                              return
+                          continue
                       if approval_enabled(db,job_id) and a['action'] in ('write_file','replace_in_file'):
                           try:
                               proposal_id=stage_change(db,job_id,a)
