@@ -45,10 +45,10 @@ class DockerIntegrationTests(unittest.TestCase):
                     with agent.job_workspace(job):
                         first=agent.draft_action(db,jobid,{
                             "action":"write_file","path":"calc.py",
-                            "content":"def double(x): return x*2\\n","reason":"source"})
+                            "content":"def double(x): return x*2\n","reason":"source"})
                         second=agent.draft_action(db,jobid,{
                             "action":"write_file","path":"tests/test_calc.py",
-                            "content":"import unittest,runpy\\nclass Example(unittest.TestCase):\\n def test_double(self): self.assertEqual(runpy.run_path('/workspace/calc.py')['double'](3),6)\\n",
+                            "content":"import unittest,runpy\nclass Example(unittest.TestCase):\n def test_double(self): self.assertEqual(runpy.run_path('/workspace/calc.py')['double'](3),6)\n",
                             "reason":"test"})
                         result=agent.draft_action(db,jobid,{"action":"run_tests","path":"",
                             "content":"","reason":"verify"},allow_tests=True)
