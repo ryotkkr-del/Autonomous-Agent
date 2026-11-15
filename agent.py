@@ -1620,7 +1620,7 @@ def main():
     experiment.add_argument('--steps',type=int,default=14)
     experiment.add_argument('--trials',type=int,default=2)
     experiment.add_argument('--scenarios',default='note,json,python')
-    experiment.add_argument('--output-dir',default='benchmark-results/experiment')
+    experiment.add_argument('--output-dir')
     diagnosis=sub.add_parser('benchmark-diagnose',help='read-only analysis of saved real-Ollama results')
     diagnosis.add_argument('--input',default='benchmark-results/real-ollama.json')
     diagnosis.add_argument('--output',default='benchmark-results/diagnosis.json')
@@ -1674,8 +1674,8 @@ def main():
     elif a.command=='benchmark-experiment':
         from benchmarks.experiment_ollama import main as run_experiment
         argv=['--instruction-file',a.instruction_file,'--model',a.model,
-              '--steps',str(a.steps),'--trials',str(a.trials),'--scenarios',a.scenarios,
-              '--output-dir',a.output_dir]
+              '--steps',str(a.steps),'--trials',str(a.trials),'--scenarios',a.scenarios]
+        if a.output_dir: argv.extend(['--output-dir',a.output_dir])
         if a.confirm: argv.append('--confirm')
         raise SystemExit(run_experiment(argv))
     elif a.command=='benchmark-diagnose':
