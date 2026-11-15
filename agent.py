@@ -383,7 +383,7 @@ def execute(action, allow_tests=False, allow_git=False, approved_urls=(), allow_
         if temp.exists() and temp.is_symlink(): raise ValueError('unsafe temporary file')
         with temp.open('w',encoding='utf-8') as f: f.write(content); f.flush(); os.fsync(f.fileno())
         os.replace(temp,p)
-        return f'WROTE {p.relative_to(WORKSPACE).as_posix()} ({len(content)} chars)'
+        return f'WROTE {p.relative_to(WORKSPACE.resolve()).as_posix()} ({len(content)} chars)'
     if op=='replace_in_file':
         # JSON payload: {old: exact existing string, new: replacement}; unique-match-only.
         try: change=json.loads(action['content'])
