@@ -12,6 +12,8 @@ import subprocess
 import sys
 import tempfile
 import threading
+import json
+import webbrowser
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 
@@ -239,7 +241,11 @@ class DesktopApp:
         self.log.pack(fill='both',expand=True,pady=(4,5))
         helptext='初回は Ollama を起動し、ollama pull gemma3:4b を実行してください。Codex はこの画面から自動起動しません。'
         ttk.Label(outer,text=helptext,wraplength=840).pack(anchor='w')
-        ttk.Button(outer,text='接続・環境を確認',command=lambda:self.launch(['doctor'],'接続確認')).pack(anchor='w',pady=(5,0))
+        bottom=ttk.Frame(outer);bottom.pack(fill='x',pady=(5,0))
+        ttk.Button(bottom,text='接続・環境を確認',command=lambda:self.launch(['doctor'],'接続確認')).pack(side='left',padx=(0,8))
+        ttk.Button(bottom,text='Docker環境を診断',command=self.check_sandbox).pack(side='left',padx=(0,8))
+        ttk.Button(bottom,text='Pythonイメージを準備',command=self.prepare_sandbox).pack(side='left',padx=(0,8))
+        ttk.Button(bottom,text='Docker公式サイト',command=lambda:webbrowser.open('https://www.docker.com/products/docker-desktop/')).pack(side='left')
 
     def _refresh_periodic(self):
         # External scheduled runs can update SQLite independently of this GUI.
@@ -475,6 +481,31 @@ class DesktopApp:
             'ネットワーク遮断・読み取り専用マウント・権限制限を適用します。\\n'
             'コンテナを突破する脆弱性やDocker自体の危険は残ります。'
             '隔離が必要ならWindows Sandboxまたは仮想マシンを利用してください。')
+
+    def check_sandbox(self):
+        """Same diagnostic used by CLI; run without blocking the Tk event loop."""
+        self.launch(['sandbox-status'],'Docker環境の診断',on_success=self._sandbox_result)
+
+    def _sandbox_result(self, output):
+        try:
+            result=json.loads(output)
+            title='Docker隔離環境の確認'
+            text=result.get('message','')+'\\n\\n'+result.get('detail','')+'\\n\\n'+result.get('next_step','')
+            if result.get('ready'):
+                messagebox.showinfo(title,text)
+            else:
+                messagebox.showwarning(title,text)
+        except (ValueError,TypeError):
+            messagebox.showwarning('診断結果','診断ログを確認してください。')
+
+    def prepare_sandbox(self):
+        """Only download the image after the user explicitly approves."""
+        if not messagebox.askyesno('Pythonイメージの準備',
+             'Docker Desktopがすでに起動している場合、公式Pythonイメージ python:3.11-slim をDocker Hubからダウンロードします。\\n'
+             'ネットワーク通信とディスク容量を使用します。続けますか？'):
+            return
+        self.launch(['sandbox-prepare','--confirm'],'Dockerイメージの準備',
+                    on_success=lambda _: self.check_sandbox())
 
     def change_search(self):
         job_id=self._current_job()
