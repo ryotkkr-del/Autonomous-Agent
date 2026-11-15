@@ -30,5 +30,36 @@ class DockerIntegrationTests(unittest.TestCase):
             self.assertTrue(result.startswith("TEST PASS [Docker sandbox]"), result)
 
 
+    def test_virtual_draft_runs_in_docker_without_writing_workspace(self):
+        import agent
+        with tempfile.TemporaryDirectory(prefix="agent-draft-docker-") as directory:
+            previous=agent.ROOT,agent.WORKSPACE,agent.DB
+            try:
+                agent.ROOT=Path(directory)
+                agent.WORKSPACE=agent.ROOT/"workspace"
+                agent.DB=agent.ROOT/"state.sqlite3"
+                agent.ensure_workspace()
+                jobid=agent.make_job("draft isolated test",require_approval=True,draft_mode=True)
+                with agent.connection() as db:
+                    job=db.execute("SELECT * FROM jobs WHERE id=?",(jobid,)).fetchone()
+                    with agent.job_workspace(job):
+                        first=agent.draft_action(db,jobid,{
+                            "action":"write_file","path":"calc.py",
+                            "content":"def double(x): return x*2\\n","reason":"source"})
+                        second=agent.draft_action(db,jobid,{
+                            "action":"write_file","path":"tests/test_calc.py",
+                            "content":"import unittest\\nimport calc\\nclass Example(unittest.TestCase):\\n def test_double(self): self.assertEqual(calc.double(3),6)\\n",
+                            "reason":"test"})
+                        # The test import relies on /workspace as a package lookup.
+                        result=agent.draft_action(db,jobid,{"action":"run_tests","path":"",
+                            "content":"","reason":"verify"},allow_tests=True)
+                self.assertIn("DRAFT SAVED",first)
+                self.assertIn("DRAFT SAVED",second)
+                self.assertTrue(result.startswith("TEST PASS"),result)
+                self.assertFalse((agent.WORKSPACE/"jobs"/str(jobid)/"calc.py").exists())
+            finally:
+                agent.ROOT,agent.WORKSPACE,agent.DB=previous
+
+
 if __name__ == "__main__":
     unittest.main()
