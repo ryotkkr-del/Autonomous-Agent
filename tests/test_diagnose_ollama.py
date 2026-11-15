@@ -102,6 +102,28 @@ class DiagnosisTests(unittest.TestCase):
             self.assertEqual(rc,2)
             self.assertEqual(source.read_text(),content)
 
+    def test_cli_and_gui_analytics_entrypoints(self):
+        import agent
+        import gui
+        self.assertTrue(callable(gui.DesktopApp.start_benchmark_diagnosis))
+        import io
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        import benchmarks.diagnose_ollama as report_module
+        with patch.object(sys, "argv", ["agent.py", "benchmark-diagnose",
+                                        "--input", "source.json",
+                                        "--output", "report.json",
+                                        "--markdown", "report.md"]), \
+             patch.object(agent, "ensure_workspace"), \
+             patch.object(report_module, "main", return_value=0) as process:
+            with self.assertRaises(SystemExit) as code:
+                with redirect_stdout(io.StringIO()):
+                    agent.main()
+        self.assertEqual(code.exception.code, 0)
+        process.assert_called_once_with(["--input", "source.json",
+                                         "--output", "report.json",
+                                         "--markdown", "report.md"])
+
     def test_false_flags_are_not_ignored_or_auto_applied(self):
         data=report([row(checks={"no_host_write":True, "valid_syntax":False},
                          category="wrong_or_incomplete_artifact")])
