@@ -76,18 +76,18 @@ def main(argv=None):
         p.error("steps must be 1-50 and trials 1-5")
     try:
         note=read_instruction(args.instruction_file)
-        model_info=real_ollama.check_model(args.model)
-        baseline,candidate,comparison=evaluate_pair(
-            args.model,names,args.steps,args.trials,note,model_info)
         output_dir=args.output_dir.resolve()
-        # Do not overwrite the input instruction, existing outputs, or the
-        # model's actual agent workspace. Existing results stay immutable.
         target_names=("baseline.json","candidate.json","comparison.json")
         destinations=[output_dir/name for name in target_names]
+        # Refuse collisions before costly model evaluation; never replace
+        # a previous result or the user-authored experiment instruction.
         if args.instruction_file.resolve() in destinations:
             raise ValueError("instruction path conflicts with experiment output")
         if any(path.exists() or path.is_symlink() for path in destinations):
             raise ValueError("experiment output files already exist; use a new output directory")
+        model_info=real_ollama.check_model(args.model)
+        baseline,candidate,comparison=evaluate_pair(
+            args.model,names,args.steps,args.trials,note,model_info)
         output_dir.mkdir(parents=True,exist_ok=True)
         for dest,record in zip(destinations,(baseline,candidate,comparison)):
             with dest.open("x",encoding="utf-8") as handle:
