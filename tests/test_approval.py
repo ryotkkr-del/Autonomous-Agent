@@ -99,6 +99,47 @@ class ApprovalTests(unittest.TestCase):
         with agent.connection() as db:
             self.assertTrue(agent.approval_enabled(db,legacy))
 
+    def test_cli_new_job_requires_review_by_default(self):
+        import io
+        import sys
+        from contextlib import redirect_stdout
+        with patch.object(sys,'argv',['agent.py','new','New secure task']):
+            with redirect_stdout(io.StringIO()):
+                agent.main()
+        with agent.connection() as db:
+            rows=db.execute("SELECT id FROM jobs WHERE goal='New secure task'").fetchall()
+            self.assertEqual(len(rows),1)
+            self.assertTrue(agent.approval_enabled(db,rows[0]['id']))
+
+    def test_protected_codex_cannot_launch(self):
+        with patch.object(agent.shutil,'which',side_effect=AssertionError('must not check codex')):
+            with self.assertRaisesRegex(ValueError,'disabled for protected jobs'):
+                agent.codex_job(self.job,confirm=True)
+
+    def test_hard_linked_target_refused(self):
+        import os
+        external=agent.ROOT/'external.md'
+        external.write_text('untouchable',encoding='utf-8')
+        self.folder.mkdir(parents=True,exist_ok=True)
+        try: os.link(external,self.folder/'lesson.md')
+        except (OSError,NotImplementedError): self.skipTest('hard links unavailable')
+        with agent.connection() as db:
+            job=db.execute('SELECT * FROM jobs WHERE id=?',(self.job,)).fetchone()
+            with agent.job_workspace(job):
+                with self.assertRaisesRegex(ValueError,'hard-linked'):
+                    agent.stage_change(db,self.job,{'action':'write_file','path':'lesson.md','content':'bad','reason':'test'})
+        self.assertEqual(external.read_text(encoding='utf-8'),'untouchable')
+
+    def test_protected_git_action_never_runs(self):
+        with agent.connection() as db:
+            db.execute('UPDATE jobs SET allow_git=1 WHERE id=?',(self.job,))
+            db.execute('UPDATE jobs SET plan=? WHERE id=?',
+                       (json.dumps({'tasks':['checkpoint'],'deliverables':['out.md']}),self.job))
+        with patch.object(agent,'decide',return_value={'action':'git_checkpoint','path':'','content':'','reason':'snapshot'}), \
+             patch.object(agent,'git_snapshot',side_effect=AssertionError('git must not run')):
+            agent.run(self.job,'unused',budget=1)
+        self.assertFalse((self.folder/'.git').exists())
+
     def test_gui_has_review_actions(self):
         self.assertTrue(callable(gui.DesktopApp.review_pending_change))
         self.assertTrue(callable(gui.DesktopApp._show_change))
