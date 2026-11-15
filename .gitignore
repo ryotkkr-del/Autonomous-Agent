@@ -5,3 +5,4 @@ __pycache__/
 state.sqlite3*
 workspace/
 *.log
+agent.lock
