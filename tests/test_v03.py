@@ -27,7 +27,7 @@ class UpgradeTests(unittest.TestCase):
         tests=agent.WORKSPACE/'tests';tests.mkdir()
         (tests/'test_example.py').write_text('import unittest\nclass T(unittest.TestCase):\n def test_true(self): self.assertTrue(True)\n')
         self.assertIn('disabled',agent.run_workspace_tests(False))
-        self.assertIn('TEST PASS',agent.run_workspace_tests(True))
+        with patch('sandbox_runner.run_tests',return_value='TEST PASS [Docker sandbox]') as isolated:\n            self.assertIn('TEST PASS',agent.run_workspace_tests(True))\n            isolated.assert_called_once()
 
     def test_blocked_skipped_by_scheduler(self):
         j=agent.make_job('bad')
