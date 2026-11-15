@@ -85,17 +85,18 @@ def isolated_agent():
 def check_model(model):
     """Require a local Ollama endpoint. Avoid unintentionally sending task data away."""
     from urllib.parse import urlsplit
+    try:
+        agent._validate_local_ollama_url(agent.OLLAMA_URL)
+    except ValueError as exc:
+        raise RuntimeError("Real benchmark requires a local, nonredirecting Ollama endpoint") from exc
     endpoint = urlsplit(agent.OLLAMA_URL)
-    if endpoint.scheme != "http" or endpoint.hostname not in ("localhost", "127.0.0.1", "::1"):
-        raise RuntimeError("Real benchmark requires a localhost Ollama HTTP endpoint")
-    if endpoint.username or endpoint.password or endpoint.query or endpoint.fragment:
-        raise RuntimeError("Unexpected Ollama endpoint parameters")
     tags_url = f"http://127.0.0.1:{endpoint.port or 11434}/api/tags"
     # IPv6 loopback uses bracketed host syntax.
     if endpoint.hostname == "::1":
         tags_url = f"http://[::1]:{endpoint.port or 11434}/api/tags"
     try:
-        with urllib.request.urlopen(tags_url, timeout=6) as response:
+        opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),agent.NoRedirect())
+        with opener.open(urllib.request.Request(tags_url,headers={'Accept':'application/json'}), timeout=6) as response:
             obj = json.loads(response.read(1_000_000))
     except (OSError, ValueError, urllib.error.URLError, TimeoutError) as exc:
         raise RuntimeError("Ollama is not responding locally; start Ollama") from exc
