@@ -9,7 +9,7 @@ import ast
 import io
 import tokenize
 import difflib
-from contextlib import contextmanager
+from contextlib import contextmanager, closing
 from datetime import datetime, timezone
 import hashlib
 import http.client
@@ -1342,7 +1342,7 @@ def show_repairs(job_id):
 
 def current_run_permissions(job_id):
     """Read committed permissions in a fresh connection at the tool boundary."""
-    with sqlite3.connect(DB,timeout=10) as fresh:
+    with closing(sqlite3.connect(DB,timeout=10)) as fresh:
         fresh.row_factory=sqlite3.Row
         job=fresh.execute('SELECT status,allow_tests,allow_git FROM jobs WHERE id=?',(job_id,)).fetchone()
         if job is None: raise ValueError('job no longer exists')
