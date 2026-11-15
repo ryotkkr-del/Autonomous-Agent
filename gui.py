@@ -471,9 +471,9 @@ class DesktopApp:
             self.launch(['safety',str(job_id)],'ジョブの権限と危険性')
         messagebox.showwarning('PCの安全性について',
             'このアプリはWindowsのカーネルやドライバーを操作しません。\\n'
-            'ただし、許可したPythonテストは通常のユーザー権限で実行され、'
-            '作業フォルダ外へのアクセスや外部通信も技術的に可能です。\\n'
-            '未確認のAI生成コードにテスト実行を許可しないでください。'
+            'Pythonテストの実行にはDockerが必須で、'
+            'ネットワーク遮断・読み取り専用マウント・権限制限を適用します。\\n'
+            'コンテナを突破する脆弱性やDocker自体の危険は残ります。'
             '隔離が必要ならWindows Sandboxまたは仮想マシンを利用してください。')
 
     def change_search(self):
@@ -500,7 +500,7 @@ class DesktopApp:
         job_id=self._current_job()
         if job_id is None:return
         enabled=self.tests_enabled.get()
-        if enabled and not messagebox.askyesno('危険性の確認','テストコードはWindowsユーザー権限で実行されます。隔離されたサンドボックスではありません。信頼できるテストのみ実行してください。許可しますか？'):
+        if enabled and not messagebox.askyesno('危険性の確認','PythonテストはDockerの隔離コンテナ内のみで実行します。Docker未準備なら実行を拒否します。完全な安全保証ではありません。許可しますか？'):
             self.tests_enabled.set(False);return
         self.launch(['allow-tests' if enabled else 'deny-tests',str(job_id)],'テスト権限を変更')
 
