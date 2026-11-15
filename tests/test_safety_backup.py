@@ -1,5 +1,6 @@
 """Offline backup/recovery regression tests for P0-4 (works on Windows/Linux)."""
 from pathlib import Path
+from contextlib import closing
 import importlib.util
 import json
 import os
@@ -49,7 +50,7 @@ class VerifiedBackupTests(unittest.TestCase):
         self.assertIn("state.sqlite3", manifest["files"])
         self.assertIn("workspace/jobs/1/lesson.md", manifest["files"])
         self.assertEqual((copied / "workspace/jobs/1/lesson.md").read_bytes(), b"original lesson\r\n")
-        with sqlite3.connect(copied / "state.sqlite3") as db:
+        with closing(sqlite3.connect(copied / "state.sqlite3")) as db:
             self.assertEqual(db.execute("select goal from jobs limit 1").fetchone()[0], "important goal")
         self.assertEqual((folder / "lesson.md").read_bytes(), b"original lesson\r\n")
         self.assertFalse((agent.ROOT / "state.sqlite3-wal").exists()
@@ -59,11 +60,12 @@ class VerifiedBackupTests(unittest.TestCase):
         folder = self._build_data()
         saved = backup.create_backup(agent.ROOT, self.dest)
         (folder / "lesson.md").write_text("CHANGED IN LIVE APPLICATION", encoding="utf-8")
-        with sqlite3.connect(agent.DB) as db:
+        with closing(sqlite3.connect(agent.DB)) as db:
             db.execute("UPDATE jobs SET goal='CHANGED' WHERE id=1")
+            db.commit()
         restored = backup.restore_to_new_directory(saved, self.base / "recover", agent.ROOT)
         self.assertEqual((restored / "workspace/jobs/1/lesson.md").read_bytes(), b"original lesson\r\n")
-        with sqlite3.connect(restored / "state.sqlite3") as db:
+        with closing(sqlite3.connect(restored / "state.sqlite3")) as db:
             self.assertEqual(db.execute("select goal from jobs where id=1").fetchone()[0], "important goal")
         self.assertEqual((folder / "lesson.md").read_text(), "CHANGED IN LIVE APPLICATION")
         with sqlite3.connect(agent.DB) as db:
