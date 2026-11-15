@@ -146,7 +146,7 @@ def command(workspace, container_name):
 
 
 
-def snapshot_workspace(source, destination, max_files=200, max_bytes=10_000_000):
+def snapshot_workspace(source, destination, max_files=200, max_bytes=10_000_000, allow_empty=False):
     """Stage a read-only copy without symlinks, special files or Git internals."""
     root=Path(source).resolve(strict=True)
     target=Path(destination)
@@ -182,7 +182,7 @@ def snapshot_workspace(source, destination, max_files=200, max_bytes=10_000_000)
         copy_to=target/rel
         copy_to.parent.mkdir(parents=True,exist_ok=True)
         shutil.copyfile(p,copy_to)
-    if count==0:
+    if count==0 and not allow_empty:
         raise ValueError("sandbox workspace has no regular files")
     if os.name!="nt" and hasattr(os,"getuid") and os.getuid()==0:
         for directory in [target,*[p for p in target.rglob("*") if p.is_dir()]]:
