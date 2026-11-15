@@ -159,11 +159,29 @@ def single_runner():
             except (OSError, UnboundLocalError): pass
         f.close()
 
+def is_sensitive_workspace_path(raw):
+    """Reject workspace metadata, hidden files, likely credentials and Windows device paths."""
+    if not isinstance(raw,str):
+        return True
+    sensitive=('secret','password','credential','private_key','api_key','access_token','id_rsa')
+    reserved={'CON','PRN','AUX','NUL',*(f'COM{i}' for i in range(1,10)),
+              *(f'LPT{i}' for i in range(1,10))}
+    for part in Path(raw).parts:
+        lower=part.lower()
+        if (not part or part.startswith('.') or part.endswith((' ','.'))
+                or lower in ('__pycache__','node_modules','.git','.ssh','.aws')
+                or any(piece in lower for piece in sensitive)
+                or part.split('.')[0].upper() in reserved):
+            return True
+    return False
+
+
 def safe_path(raw):
     if not isinstance(raw,str) or not raw or '\\' in raw or '\x00' in raw or ':' in raw:
         raise ValueError('invalid workspace-relative path')
     p=Path(raw)
     if p.is_absolute() or any(x in ('..','.') for x in p.parts): raise ValueError('unsafe path')
+    if is_sensitive_workspace_path(raw): raise ValueError('protected or unsafe workspace path')
     root=WORKSPACE.resolve()
     resolved=(WORKSPACE/p).resolve()
     if resolved==root or not resolved.is_relative_to(root): raise ValueError('outside workspace')
@@ -172,12 +190,18 @@ def safe_path(raw):
     for part in p.parts:
         current=current/part
         if current.is_symlink(): raise ValueError('symlink paths are forbidden')
+    if resolved.is_file() and resolved.stat().st_nlink>1:
+        raise ValueError('hard-linked workspace files are forbidden')
     return resolved
 
 def files_list():
     result=[]
     for p in WORKSPACE.rglob('*'):
-        if p.is_file() and not p.is_symlink() and not p.name.endswith(('.agent-backup','.agent-tmp')) and not any(parent.is_symlink() for parent in p.parents if parent != WORKSPACE.parent):
+        if (p.is_file() and not p.is_symlink()
+                and not is_sensitive_workspace_path(p.relative_to(WORKSPACE).as_posix())
+                and p.stat().st_nlink==1
+                and not p.name.endswith(('.agent-backup','.agent-tmp'))
+                and not any(parent.is_symlink() for parent in p.parents if parent != WORKSPACE.parent)):
             result.append(p.relative_to(WORKSPACE).as_posix())
     return sorted(result)[:150]
 
