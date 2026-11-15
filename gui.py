@@ -552,7 +552,7 @@ class DesktopApp:
                      '--model',model,'--trials',str(trials),'--steps',str(steps)],
                     '実AIの比較実験',
                     on_success=lambda _:messagebox.showinfo('比較実験を保存しました',
-                        'benchmark-results/experiment/ 内の comparison.json を確認してください。'
+                        'benchmark-results/experiments/ 内の最新フォルダの comparison.json を確認してください。'
                         '改善候補はソースコードへ自動適用していません。'))
 
     def start_benchmark_diagnosis(self):
