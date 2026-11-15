@@ -1584,7 +1584,7 @@ def doctor():
     except Exception: print('Ollama: not reachable')
 
 def main():
-    parser=argparse.ArgumentParser(description='Autonomous Agent v2.4 — safe virtual drafting and evidence-based evaluation')
+    parser=argparse.ArgumentParser(description='Autonomous Agent v2.5 — opt-in controlled Ollama experiments')
     sub=parser.add_subparsers(dest='command',required=True)
     n=sub.add_parser('new');n.add_argument('goal')
     for command in ('protect-job','pending'):
@@ -1613,6 +1613,14 @@ def main():
     cr.add_argument('--contains',action='append',default=[],metavar='PATH::TEXT')
     t=sub.add_parser('tick');t.add_argument('--steps',type=int,default=8);t.add_argument('--model',default=MODEL)
     safe=sub.add_parser('safety');safe.add_argument('job_id',type=int,nargs='?')
+    experiment=sub.add_parser('benchmark-experiment',help='explicit baseline-vs-candidate local model experiment')
+    experiment.add_argument('--instruction-file',required=True)
+    experiment.add_argument('--confirm',action='store_true')
+    experiment.add_argument('--model',default='gemma3:4b')
+    experiment.add_argument('--steps',type=int,default=14)
+    experiment.add_argument('--trials',type=int,default=2)
+    experiment.add_argument('--scenarios',default='note,json,python')
+    experiment.add_argument('--output-dir',default='benchmark-results/experiment')
     diagnosis=sub.add_parser('benchmark-diagnose',help='read-only analysis of saved real-Ollama results')
     diagnosis.add_argument('--input',default='benchmark-results/real-ollama.json')
     diagnosis.add_argument('--output',default='benchmark-results/diagnosis.json')
@@ -1663,6 +1671,13 @@ def main():
     elif a.command=='safety': print(json.dumps(safety_summary(a.job_id),ensure_ascii=False,indent=2))
     elif a.command=='tick': tick(a.model,a.steps)
     elif a.command=='status': show_jobs()
+    elif a.command=='benchmark-experiment':
+        from benchmarks.experiment_ollama import main as run_experiment
+        argv=['--instruction-file',a.instruction_file,'--model',a.model,
+              '--steps',str(a.steps),'--trials',str(a.trials),'--scenarios',a.scenarios,
+              '--output-dir',a.output_dir]
+        if a.confirm: argv.append('--confirm')
+        raise SystemExit(run_experiment(argv))
     elif a.command=='benchmark-diagnose':
         from benchmarks.diagnose_ollama import main as run_diagnosis
         raise SystemExit(run_diagnosis(['--input',a.input,'--output',a.output,'--markdown',a.markdown]))
