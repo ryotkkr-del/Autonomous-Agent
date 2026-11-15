@@ -41,6 +41,22 @@ class VerifiedBackupTests(unittest.TestCase):
         (folder / "lesson.md").write_bytes(b"original lesson\r\n")
         return folder
 
+    def test_isolated_python_cli_starts_without_mutating_data(self):
+        import subprocess
+        import sys
+        script = Path(__file__).resolve().parents[1] / "safety_backup.py"
+        result = subprocess.run([sys.executable, "-I", str(script), "--help"],
+                                capture_output=True, text=True, errors="replace", timeout=20)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("recover", result.stdout)
+        self.assertFalse(agent.DB.exists())
+
+    def test_malicious_windows_manifest_paths_are_rejected(self):
+        for name in ("workspace/C:private", "workspace/CON.txt",
+                     "workspace/file.", "workspace/file ", "workspace/a\\file"):
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "invalid|unsafe"):
+                backup._check_name(name)
+
     def test_consistent_wal_sqlite_backup_and_workspace_copy(self):
         folder = self._build_data()
         copied = backup.create_backup(agent.ROOT, self.dest, "f" * 40)
