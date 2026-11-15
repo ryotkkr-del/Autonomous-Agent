@@ -29,6 +29,7 @@ class UsabilityTests(unittest.TestCase):
                 db.execute("INSERT INTO plan_tasks VALUES(4,'done')")
                 db.execute("INSERT INTO plan_tasks VALUES(4,'todo')")
             finally:
+                db.commit()
                 db.close()
             r=read_job_details(4,dbpath)
             self.assertEqual((r['task_total'],r['task_done']),(2,1))
