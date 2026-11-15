@@ -226,7 +226,9 @@ class DesktopApp:
         checks=ttk.Frame(outer);checks.pack(fill='x',pady=(0,5))
         ttk.Button(checks,text='成功条件を設定',command=self.set_success_criteria).pack(side='left',padx=(0,7))
         ttk.Button(checks,text='成功条件を見る',command=self.view_success_criteria).pack(side='left',padx=(0,7))
-        ttk.Button(checks,text='PCへの影響・権限を確認',command=self.view_safety).pack(side='left')
+        ttk.Button(checks,text='PCへの影響・権限を確認',command=self.view_safety).pack(side='left',padx=(0,7))
+        ttk.Button(checks,text='変更案を確認・承認',command=self.review_pending_change).pack(side='left',padx=(0,7))
+        ttk.Button(checks,text='旧ジョブの保護を有効化',command=self.protect_legacy_job).pack(side='left')
         opts = ttk.Frame(outer); opts.pack(fill='x', pady=(3, 9))
         self.testbox=ttk.Checkbutton(opts,text='Pythonテスト実行を許可（注意）',variable=self.tests_enabled,command=self.change_tests)
         self.testbox.pack(side='left',padx=(0,18))
@@ -401,8 +403,10 @@ class DesktopApp:
         job=self.jobs[str(job_id)]
         if job['status']=='done':
             messagebox.showinfo('完了','このジョブは完了しています。別の目標を登録してください。');return
+        if job['status']=='awaiting_approval':
+            messagebox.showinfo('変更の確認が必要','変更案を確認・承認 から内容を確認してください。');return
         if job['status']=='blocked':
-            messagebox.showwarning('要確認','このジョブは停止条件に達しています。履歴を確認し、解除する場合はCLIの unblock を使ってください。');return
+            messagebox.showwarning('要確認','このジョブは停止条件に達しています。履歴を確認して解除してください。');return
         try:steps=int(self.steps.get())
         except (ValueError,tk.TclError):steps=8
         if not 1 <= steps <= 30:
@@ -506,6 +510,67 @@ class DesktopApp:
             return
         self.launch(['sandbox-prepare','--confirm'],'Dockerイメージの準備',
                     on_success=lambda _: self.check_sandbox())
+
+    def protect_legacy_job(self):
+        job_id=self._current_job()
+        if job_id is None:return
+        if not messagebox.askyesno('変更の承認を必須にする',
+            'ジョブ #'+str(job_id)+' について、今後のAIによるファイル編集をレビュー待ちにします。'
+            '以前の作業結果は変更しません。続けますか？'):
+            return
+        self.launch(['protect-job',str(job_id)],'変更承認の保護を設定')
+
+    def review_pending_change(self):
+        job_id=self._current_job()
+        if job_id is None:return
+        self.launch(['pending',str(job_id)],'未承認の変更を確認',
+                    on_success=lambda output:self._choose_pending(job_id,output))
+
+    def _choose_pending(self,job_id,output):
+        try:
+            items=json.loads(output)
+            if not items:
+                messagebox.showinfo('変更の承認','保留中の変更はありません。');return
+            change_id=items[0]['id']
+        except (ValueError,KeyError,IndexError,TypeError):
+            messagebox.showerror('読み取りエラー','変更一覧を読み取れませんでした。');return
+        # Delay command until after the current worker is fully released.
+        self.root.after(100,lambda:self.launch(
+            ['change-preview',str(job_id),str(change_id)],
+            '変更内容を表示',on_success=lambda o:self._show_change(job_id,change_id,o)))
+
+    def _show_change(self,job_id,change_id,output):
+        try:
+            change=json.loads(output)
+            diff=change['diff']
+        except (ValueError,KeyError,TypeError):
+            messagebox.showerror('確認できません','変更差分を表示できません。');return
+        window=tk.Toplevel(self.root)
+        window.title('変更の確認 — '+change['path'])
+        window.geometry('820x600')
+        ttk.Label(window,text='対象: '+change['path']+'  /  '+change.get('reason',''),
+                  wraplength=780).pack(fill='x',padx=12,pady=12)
+        view=tk.Text(window,wrap='none',font=('Consolas',10))
+        view.insert('1.0',diff or '差分はありません。')
+        view.configure(state='disabled')
+        view.pack(fill='both',expand=True,padx=12)
+        if change.get('truncated'):
+            ttk.Label(window,text='差分が長いため省略されています。CLIで完全に確認してから承認してください。').pack()
+        bar=ttk.Frame(window);bar.pack(pady=12)
+        def finish(approve):
+            if approve and change.get('truncated'):
+                messagebox.showwarning('差分の省略','この画面では全体を確認できないため、GUIからは承認しません。');return
+            if approve and not messagebox.askyesno('変更を反映しますか？',
+                    '表示された変更をジョブの作業フォルダへ保存します。ファイルが変わっていた場合は拒否します。'):
+                return
+            window.destroy()
+            command='approve-change' if approve else 'reject-change'
+            self.root.after(100,lambda:self.launch(
+                [command,str(job_id),str(change_id)],
+                '変更を承認' if approve else '変更を却下'))
+        ttk.Button(bar,text='承認して反映',command=lambda:finish(True)).pack(side='left',padx=12)
+        ttk.Button(bar,text='却下する',command=lambda:finish(False)).pack(side='left',padx=12)
+        ttk.Button(bar,text='閉じる',command=window.destroy).pack(side='left',padx=12)
 
     def change_search(self):
         job_id=self._current_job()
