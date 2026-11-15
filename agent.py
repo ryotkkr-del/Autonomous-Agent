@@ -1061,6 +1061,10 @@ def approve_batch(job_id,change_ids):
             job=db.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
             if not job: raise ValueError('unknown job')
             if job['status']!='awaiting_approval': raise ValueError('job is not awaiting approval')
+            if draft_enabled(db,job_id):
+                all_ids={r['id'] for r in db.execute("SELECT id FROM pending_changes WHERE job_id=? AND state='pending'",(job_id,))}
+                if set(ids)!=all_ids:
+                    raise ValueError('virtual draft approval must include every pending file')
             rows=[]
             with job_workspace(job):
                 seen=set()
@@ -1124,12 +1128,18 @@ def resolve_change(job_id,change_id,approve=False):
             if not row: raise ValueError('pending edit not found')
             if job['status']!='awaiting_approval':
                 raise ValueError('job is not awaiting approval')
+            if approve and draft_enabled(db,job_id):
+                count=db.execute("SELECT COUNT(*) FROM pending_changes WHERE job_id=? AND state='pending'",(job_id,)).fetchone()[0]
+                if count>1:
+                    raise ValueError('virtual draft has multiple files; review and approve the complete batch')
             with job_workspace(job):
                 if not approve:
                     db.execute("UPDATE pending_changes SET state='rejected' WHERE id=?",(change_id,))
                     record(db,job_id,{'action':'rejected_change','path':row['path'],'content':'','reason':'user rejected edit'},
                            'REJECTED: proposal discarded; no file changes made')
-                    update_status(db,job_id,'paused','change rejected')
+                    remaining=db.execute("SELECT COUNT(*) FROM pending_changes WHERE job_id=? AND state='pending'",(job_id,)).fetchone()[0]
+                    update_status(db,job_id,'awaiting_approval' if remaining else 'paused',
+                                  'other pending drafts remain' if remaining else 'change rejected')
                     return 'Rejected edit #'+str(change_id)
                 path=safe_path(row['path'])
                 if _file_digest(path)!=row['expected_sha']:
