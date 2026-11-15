@@ -255,6 +255,9 @@ class DesktopApp:
         evalrow=ttk.Frame(outer);evalrow.pack(fill='x',pady=(3,0))
         ttk.Button(evalrow,text='実AIの性能を評価（Ollama）',command=self.start_real_benchmark).pack(side='left',padx=(0,9))
         ttk.Button(evalrow,text='評価結果から改善案を作成',command=self.start_benchmark_diagnosis).pack(side='left',padx=(0,9))
+        experimentrow=ttk.Frame(outer);experimentrow.pack(fill='x',pady=(3,0))
+        ttk.Button(experimentrow,text='改善案を比較実験',command=self.start_benchmark_experiment).pack(side='left',padx=(0,9))
+        ttk.Label(experimentrow,text='指示ファイルを確認後に実測・既存コードは変更しません').pack(side='left')
         ttk.Label(evalrow,text='テスト専用環境で実行・生成コードは実行しません').pack(side='left')
 
     def _refresh_periodic(self):
@@ -520,6 +523,37 @@ class DesktopApp:
             return
         self.launch(['sandbox-prepare','--confirm'],'Dockerイメージの準備',
                     on_success=lambda _: self.check_sandbox())
+
+    def start_benchmark_experiment(self):
+        """Compare baseline and a user-authored candidate hint; no self-modification."""
+        from tkinter import filedialog
+        source=filedialog.askopenfilename(
+            parent=self.root,title='実験に使用する追加指示のテキストを選択',
+            filetypes=[('Text file','*.txt'),('All files','*.*')])
+        if not source:return
+        model=simpledialog.askstring('比較実験','Ollamaモデル名',initialvalue='gemma3:4b',parent=self.root)
+        if model is None:return
+        model=model.strip()
+        if not model or len(model)>100 or any(ch.isspace() for ch in model):
+            messagebox.showwarning('モデル名','有効なモデル名を入力してください。');return
+        trials=simpledialog.askinteger('実験試行回数','各条件・各タスクの試行回数（1〜5）',
+            initialvalue=2,minvalue=1,maxvalue=5,parent=self.root)
+        if trials is None:return
+        steps=simpledialog.askinteger('最大ステップ数','各タスクのステップ上限（1〜50）',
+            initialvalue=14,minvalue=1,maxvalue=50,parent=self.root)
+        if steps is None:return
+        if not messagebox.askyesno('比較実験の最終確認',
+            '通常の条件と、選択した追加指示を加えた条件でそれぞれ実Ollamaを動かします。'
+            '合計 '+str(6*trials)+' タスクを実行します。'
+            '通常ジョブ・ソースコード・権限は変更せず、一時作業領域で採点します。'
+            '実行してよいですか？'):
+            return
+        self.launch(['benchmark-experiment','--confirm','--instruction-file',source,
+                     '--model',model,'--trials',str(trials),'--steps',str(steps)],
+                    '実AIの比較実験',
+                    on_success=lambda _:messagebox.showinfo('比較実験を保存しました',
+                        'benchmark-results/experiment/ 内の comparison.json を確認してください。'
+                        '改善候補はソースコードへ自動適用していません。'))
 
     def start_benchmark_diagnosis(self):
         """Analyze local saved benchmark results only; never change agent code."""
