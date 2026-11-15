@@ -117,6 +117,12 @@ def connection():
        original_action TEXT NOT NULL, reason TEXT NOT NULL,
        state TEXT NOT NULL DEFAULT 'pending', created TEXT NOT NULL)''')
     db.execute('CREATE INDEX IF NOT EXISTS pending_by_job ON pending_changes(job_id,state,id)')
+    db.execute('''CREATE TABLE IF NOT EXISTS applied_snapshots (
+        id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL, change_id INTEGER NOT NULL,
+        path TEXT NOT NULL, previous BLOB, applied_sha TEXT NOT NULL,
+        state TEXT NOT NULL DEFAULT 'applied', created TEXT NOT NULL)''')
+    db.execute('CREATE INDEX IF NOT EXISTS snapshot_by_job ON applied_snapshots(job_id,state,id)')
+
     # Existing installations are hardened once on upgrade. Fresh databases
     # have no jobs at this point; direct library callers may still opt out
     # explicitly when creating jobs for controlled test fixtures.
@@ -847,6 +853,140 @@ def change_preview(job_id,change_id):
                     'diff':diff[:140_000],'truncated':len(diff)>140_000}
 
 
+def scan_proposed_secrets(content):
+    """Block high-confidence credentials, not arbitrary words in textbooks."""
+    patterns=[
+        r'-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----',
+        r'(?<![A-Za-z0-9])gh[pousr]_[A-Za-z0-9_]{20,}',
+        r'(?<![A-Za-z0-9])AKIA[0-9A-Z]{16}(?![0-9A-Z])',
+        r'(?i)(?:api[_-]?key|secret[_-]?key|access[_-]?token|password)\\s*[:=]\\s*["\\'][^"\\'\\n]{12,}["\\']',
+    ]
+    return any(re.search(pattern,content) for pattern in patterns)
+
+
+def _apply_reviewed_change(db,job_id,row):
+    """Only called under the single-runner lock after a human approval."""
+    path=safe_path(row['path'])
+    if _file_digest(path)!=row['expected_sha']:
+        raise ValueError('file modified since proposal; refused stale approval')
+    if scan_proposed_secrets(row['content']):
+        raise ValueError('potential secret detected; approval refused')
+    original=path.read_bytes() if path.exists() else None
+    result=execute({'action':'write_file','path':row['path'],'content':row['content'],
+                    'reason':row['reason']},allow_tests=False,allow_git=False)
+    if not result.startswith('WROTE'):
+        raise RuntimeError('approved edit failed: '+result)
+    after=_file_digest(path)
+    db.execute('''INSERT INTO applied_snapshots(job_id,change_id,path,previous,applied_sha,state,created)
+                  VALUES(?,?,?,?,?,'applied',?)''',
+               (job_id,row['id'],row['path'],original,after,now()))
+    db.execute("UPDATE pending_changes SET state='approved' WHERE id=?",(row['id'],))
+    record(db,job_id,{'action':'write_file','path':row['path'],'content':row['content'],
+                      'reason':'approved by user'},result)
+    return result
+
+
+def list_snapshots(job_id):
+    with connection() as db:
+        if not db.execute('SELECT id FROM jobs WHERE id=?',(job_id,)).fetchone():
+            raise ValueError('unknown job')
+        return [dict(row) for row in db.execute(
+            'SELECT id,change_id,path,state,created FROM applied_snapshots WHERE job_id=? ORDER BY id DESC',
+            (job_id,))]
+
+
+def _restore_bytes(path,data):
+    """Restore exact bytes with a unique temporary file; never execute content."""
+    if data is None:
+        path.unlink(missing_ok=True)
+        return
+    path.parent.mkdir(parents=True,exist_ok=True)
+    fd,name=tempfile.mkstemp(prefix='.agent-restore-',dir=path.parent)
+    try:
+        with os.fdopen(fd,'wb') as out:
+            out.write(data);out.flush();os.fsync(out.fileno())
+        os.replace(name,path)
+    finally:
+        try: os.unlink(name)
+        except FileNotFoundError: pass
+
+
+def rollback_snapshot(job_id,snapshot_id):
+    """Restore only if the file is still exactly as this approval wrote it."""
+    with single_runner():
+        with connection() as db:
+            job=db.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+            if not job: raise ValueError('unknown job')
+            row=db.execute("SELECT * FROM applied_snapshots WHERE id=? AND job_id=? AND state='applied'",
+                           (snapshot_id,job_id)).fetchone()
+            if not row: raise ValueError('active snapshot not found')
+            with job_workspace(job):
+                path=safe_path(row['path'])
+                if _file_digest(path)!=row['applied_sha']:
+                    raise ValueError('file changed after approval; rollback refused')
+                _restore_bytes(path,row['previous'])
+                db.execute("UPDATE applied_snapshots SET state='rolled_back' WHERE id=?",(snapshot_id,))
+                record(db,job_id,{'action':'rollback','path':row['path'],'content':'','reason':'human rollback'},
+                       'ROLLED BACK snapshot #'+str(snapshot_id))
+                update_status(db,job_id,'paused','human rollback completed')
+                return 'Rolled back snapshot #'+str(snapshot_id)
+
+
+def approve_batch(job_id,change_ids):
+    """Prevalidate all, apply one-by-one, and compensate on ordinary failure.
+
+    A crash/power loss during the batch is not an atomic filesystem transaction.
+    """
+    ids=list(change_ids)
+    if not ids or len(ids)>20 or len(ids)!=len(set(ids)):
+        raise ValueError('batch requires 1-20 distinct edits')
+    with single_runner():
+        with connection() as db:
+            job=db.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+            if not job: raise ValueError('unknown job')
+            if job['status']!='awaiting_approval': raise ValueError('job is not awaiting approval')
+            rows=[]
+            with job_workspace(job):
+                seen=set()
+                for cid in ids:
+                    row=db.execute("SELECT * FROM pending_changes WHERE id=? AND job_id=? AND state='pending'",
+                                   (cid,job_id)).fetchone()
+                    if not row: raise ValueError('pending edit not found: '+str(cid))
+                    if row['path'] in seen: raise ValueError('batch cannot contain duplicate paths')
+                    seen.add(row['path'])
+                    if _file_digest(safe_path(row['path']))!=row['expected_sha']:
+                        raise ValueError('file changed since proposal; refused stale approval')
+                    if scan_proposed_secrets(row['content']):
+                        raise ValueError('potential secret detected; approval refused')
+                    rows.append(row)
+                applied=[]
+                try:
+                    for row in rows:
+                        _apply_reviewed_change(db,job_id,row)
+                        applied.append(row)
+                except Exception:
+                    # Best-effort compensation; preserve errors and snapshots.
+                    failures=[]
+                    for row in reversed(applied):
+                        snapshot=db.execute("SELECT * FROM applied_snapshots WHERE change_id=? AND job_id=? ORDER BY id DESC LIMIT 1",
+                                            (row['id'],job_id)).fetchone()
+                        try:
+                            path=safe_path(row['path'])
+                            if _file_digest(path)!=snapshot['applied_sha']:
+                                raise ValueError('changed during compensation')
+                            _restore_bytes(path,snapshot['previous'])
+                            db.execute("UPDATE applied_snapshots SET state='rolled_back' WHERE id=?",(snapshot['id'],))
+                            db.execute("UPDATE pending_changes SET state='pending' WHERE id=?",(row['id'],))
+                        except Exception as exc:
+                            failures.append(str(exc))
+                    db.commit()
+                    if failures:
+                        raise RuntimeError('batch rollback incomplete: '+'; '.join(failures))
+                    raise
+                update_status(db,job_id,'paused','batch approved; ready to resume')
+                return 'Approved '+str(len(rows))+' file changes'
+
+
 def resolve_change(job_id,change_id,approve=False):
     """Apply only after explicit approval; stale revisions fail closed."""
     with single_runner():
@@ -868,14 +1008,7 @@ def resolve_change(job_id,change_id,approve=False):
                 if _file_digest(path)!=row['expected_sha']:
                     # Do not lose the original proposal; it can be rejected.
                     raise ValueError('file modified since proposal; refused stale approval')
-                # Changes to executable code are still just text writes.
-                result=execute({'action':'write_file','path':row['path'],'content':row['content'],
-                                'reason':row['reason']},allow_tests=False,allow_git=False)
-                if not result.startswith('WROTE'):
-                    raise RuntimeError('approved edit failed: '+result)
-                db.execute("UPDATE pending_changes SET state='approved' WHERE id=?",(change_id,))
-                record(db,job_id,{'action':'write_file','path':row['path'],'content':row['content'],
-                                  'reason':'approved by user'},result)
+                result=_apply_reviewed_change(db,job_id,row)
                 update_status(db,job_id,'paused','approved edit; ready to resume')
                 return 'Approved edit #'+str(change_id)+': '+result
 
@@ -1278,6 +1411,9 @@ def main():
         p=sub.add_parser(command);p.add_argument('job_id',type=int)
     for command in ('change-preview','approve-change','reject-change'):
         p=sub.add_parser(command);p.add_argument('job_id',type=int);p.add_argument('change_id',type=int)
+    p=sub.add_parser('approve-batch');p.add_argument('job_id',type=int);p.add_argument('change_ids',type=int,nargs='+')
+    p=sub.add_parser('snapshots');p.add_argument('job_id',type=int)
+    p=sub.add_parser('rollback');p.add_argument('job_id',type=int);p.add_argument('snapshot_id',type=int)
     r=sub.add_parser('run');r.add_argument('job_id',type=int);r.add_argument('--steps',type=int,default=8)
     r.add_argument('--model',default=MODEL);r.add_argument('--codex',action='store_true',help='show Codex hint; never runs automatically')
     c=sub.add_parser('codex');c.add_argument('job_id',type=int);c.add_argument('--confirm',action='store_true')
@@ -1307,6 +1443,9 @@ def main():
     elif a.command=='change-preview': print(json.dumps(change_preview(a.job_id,a.change_id),ensure_ascii=False,indent=2))
     elif a.command=='approve-change': print(resolve_change(a.job_id,a.change_id,approve=True))
     elif a.command=='reject-change': print(resolve_change(a.job_id,a.change_id,approve=False))
+    elif a.command=='approve-batch': print(approve_batch(a.job_id,a.change_ids))
+    elif a.command=='snapshots': print(json.dumps(list_snapshots(a.job_id),ensure_ascii=False,indent=2))
+    elif a.command=='rollback': print(rollback_snapshot(a.job_id,a.snapshot_id))
     elif a.command=='codex': codex_job(a.job_id,a.confirm)
     elif a.command=='allow-tests': set_tests(a.job_id,True)
     elif a.command=='deny-tests': set_tests(a.job_id,False)
