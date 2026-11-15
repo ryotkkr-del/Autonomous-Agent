@@ -850,6 +850,96 @@ def stage_change(db,job_id,a):
     return c.lastrowid
 
 
+def draft_action(db,job_id,a,allow_tests=False):
+    """Run text editing and inspection against a SQLite overlay, never host writes."""
+    op=a['action']
+    if op in ('write_file','replace_in_file'):
+        path=a['path']
+        p=safe_path(path)
+        existing=db.execute("SELECT * FROM pending_changes WHERE job_id=? AND path=? AND state='pending'",
+                            (job_id,path)).fetchone()
+        if existing:
+            current=existing['content']
+            original_hash=existing['expected_sha']
+        else:
+            original_hash=_file_digest(p)
+            current=p.read_text(encoding='utf-8') if original_hash!='ABSENT' else ''
+        if op=='replace_in_file':
+            try: change=json.loads(a['content'])
+            except (TypeError,ValueError): return 'ERROR: invalid JSON replacement'
+            old,new=change.get('old'),change.get('new')
+            if not isinstance(old,str) or not old or not isinstance(new,str) or current.count(old)!=1:
+                return 'ERROR: replacement must have exactly one match'
+            content=current.replace(old,new,1)
+        else:
+            content=a['content']
+        if not isinstance(content,str) or len(content.encode('utf-8'))>MAX_FILE_BYTES:
+            return 'ERROR: draft file too large'
+        if existing:
+            db.execute("UPDATE pending_changes SET content=?,original_action=?,reason=? WHERE id=?",
+                       (content,op,a.get('reason','')[:1000],existing['id']))
+            cid=existing['id']
+        else:
+            queued=db.execute("SELECT COUNT(*) FROM pending_changes WHERE job_id=? AND state='pending'",(job_id,)).fetchone()[0]
+            if queued>=20: return 'ERROR: draft limit of 20 changed files reached'
+            c=db.execute("""INSERT INTO pending_changes(job_id,path,content,expected_sha,original_action,reason,state,created)
+                         VALUES(?,?,?,?,?,?,'pending',?)""",
+                         (job_id,path,content,original_hash,op,a.get('reason','')[:1000],now()))
+            cid=c.lastrowid
+        db.commit()
+        return 'DRAFT SAVED #'+str(cid)+': '+path+' (not written to host workspace)'
+    if op in ('read_file','check_python'):
+        p=safe_path(a['path'])
+        row=db.execute("SELECT content FROM pending_changes WHERE job_id=? AND path=? AND state='pending'",
+                       (job_id,a['path'])).fetchone()
+        if row is None: return execute(a)
+        source=row['content']
+        if op=='read_file': return source[:MAX_RESPONSE]
+        if p.suffix.lower()!='.py': return 'ERROR: check_python requires .py'
+        try: ast.parse(source,filename=a['path'])
+        except SyntaxError as exc: return 'ERROR: Python syntax: '+str(exc)[:MAX_CHECK_OUTPUT]
+        return 'CHECK PASS: Python syntax valid: '+a['path']+' (draft)'
+    if op=='list_files':
+        names=set(files_list())
+        names.update(r['path'] for r in db.execute("SELECT path FROM pending_changes WHERE job_id=? AND state='pending'",(job_id,)))
+        return '\n'.join(sorted(names)[:150]) or '(draft and workspace empty)'
+    if op=='run_tests':
+        if not allow_tests: return 'ERROR: run_tests disabled'
+        import sandbox_runner
+        try:
+            with tempfile.TemporaryDirectory(prefix='agent-draft-check-') as stage:
+                sandbox_runner.snapshot_workspace(WORKSPACE,stage,allow_empty=True)
+                for row in db.execute("SELECT path,content FROM pending_changes WHERE job_id=? AND state='pending'",(job_id,)):
+                    safe_path(row['path'])
+                    p=Path(stage)/row['path']
+                    if p.suffix.lower() not in ('.py','.txt','.md','.csv','.json'):
+                        return 'ERROR: draft has unsupported test fixture type'
+                    if any(piece.startswith('.') for piece in Path(row['path']).parts):
+                        return 'ERROR: draft contains hidden path'
+                    p.parent.mkdir(parents=True,exist_ok=True)
+                    p.write_text(row['content'],encoding='utf-8')
+                return sandbox_runner.run_tests(stage)
+        except (OSError,ValueError) as exc:
+            return 'ERROR: draft test preparation failed: '+str(exc)[:300]
+    if op=='git_checkpoint':
+        return 'ERROR: Git checkpoint unavailable in virtual draft'
+    return execute(a,allow_tests=False,allow_git=False)
+
+
+def draft_acceptance_check(db,job_id):
+    row=db.execute('SELECT criteria FROM job_controls WHERE job_id=?',(job_id,)).fetchone()
+    criteria=json.loads(row['criteria']) if row else {}
+    for check in criteria.get('checks',[]):
+        p=safe_path(check['path'])
+        proposed=db.execute("SELECT content FROM pending_changes WHERE job_id=? AND path=? AND state='pending'",
+                            (job_id,check['path'])).fetchone()
+        text=proposed['content'] if proposed else (p.read_text(encoding='utf-8') if p.is_file() else '')
+        if not text: return False,'required draft file missing: '+check['path']
+        if check['type']=='contains' and check['text'] not in text:
+            return False,'required draft content missing: '+check['path']
+    return True,'draft acceptance checks passed'
+
+
 def pending_changes(job_id):
     with connection() as db:
         job=db.execute('SELECT id FROM jobs WHERE id=?',(job_id,)).fetchone()
