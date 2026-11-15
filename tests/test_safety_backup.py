@@ -84,7 +84,7 @@ class VerifiedBackupTests(unittest.TestCase):
         with closing(sqlite3.connect(restored / "state.sqlite3")) as db:
             self.assertEqual(db.execute("select goal from jobs where id=1").fetchone()[0], "important goal")
         self.assertEqual((folder / "lesson.md").read_text(), "CHANGED IN LIVE APPLICATION")
-        with sqlite3.connect(agent.DB) as db:
+        with closing(sqlite3.connect(agent.DB)) as db:
             self.assertEqual(db.execute("select goal from jobs where id=1").fetchone()[0], "CHANGED")
         with self.assertRaisesRegex(ValueError, "not already exist"):
             backup.restore_to_new_directory(saved, self.base / "recover", agent.ROOT)
