@@ -774,6 +774,7 @@ def protect_job(job_id):
 def _file_digest(p):
     if not p.exists(): return 'ABSENT'
     if not p.is_file() or p.is_symlink(): raise ValueError('unsafe target file')
+    if p.stat().st_nlink>1: raise ValueError('hard-linked files cannot be changed by approval')
     if p.stat().st_size>MAX_FILE_BYTES: raise ValueError('target file too large')
     return hashlib.sha256(p.read_bytes()).hexdigest()
 
@@ -1081,9 +1082,8 @@ def run(job_id,model,budget=8,codex=False):
                               return
                       before_fp=workspace_fingerprint() if a['action'] in ('write_file','replace_in_file') and not (approval_enabled(db,job_id)) else None
                       if approval_enabled(db,job_id) and a['action'] in ('write_file','replace_in_file'):
-                          # On failure the action must never fall through into a
-                          # direct host write.
-                          result=result
+                          # A failed proposal is an error, never a direct write.
+                          pass
                       else:
                           try:
                               if approval_enabled(db,job_id) and a['action']=='git_checkpoint':
