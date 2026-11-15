@@ -1,4 +1,4 @@
-# Autonomous Agent v2.3
+# Autonomous Agent v2.4
 
 Windows用のローカル自律AIエージェント。**GitHubの`main`にアプリ本体とGUIを公開済み**です。既存のv1.1以前のコード・SQLiteデータ形式を引き継いでいます。
 
@@ -523,3 +523,24 @@ python benchmarks/compare_ollama.py benchmark-results/before.json benchmark-resu
 **GUIから実行:** 「実AIの性能を評価（Ollama）」ボタンでモデル名・試行回数・ステップ数を選べます。実測完了後は `benchmark-results/real-ollama.json` に記録されます。**課題の不正解も測定データとして正常終了**し、結果JSONの `passed` と `failure_category` を確認してください。Ollama接続失敗はエラー扱いです。
 
 **テストと実測の区別:** GitHub Actionsはコードの動作を模擬した回帰テストと隔離テストのみ実施します。GitHub Actionsで`gemma3:4b`の推論実測を行ったわけではなく、実測はOllamaがインストールされたPCで実行して初めて結果が出ます。
+
+## v2.4 — 評価結果から失敗原因を整理して改善案を作成
+
+v2.3で保存した**実Ollamaベンチマーク結果**をオフラインで分析し、根拠のある改善候補と検証方法を作成します。モデルに追加問い合わせする機能ではありません。実測がない状態で改善案を作ったり、コード・プロンプト・設定を自動的に変更したりしません。
+
+### GUI
+
+1. 「実AIの性能を評価（Ollama）」で実測値を保存する。
+2. 「評価結果から改善案を作成」を押す。
+3. `benchmark-results/diagnosis.md` を開き、根拠と検証方法を人間が確認する。
+
+### CLI
+
+```powershell
+python agent.py benchmark-diagnose
+python benchmarks/diagnose_ollama.py --input benchmark-results/real-ollama.json --output benchmark-results/diagnosis.json --markdown benchmark-results/diagnosis.md
+```
+
+分析では、ホストへの意図しない書き込み、Ollamaや実行環境のエラー、停止、生成物の不一致、検証失敗、ステップ不足などを分類します。件数・対象シナリオ・失敗した検査項目を記録し、重要度順に改善案を提示します。成功時には無理に改善課題を作りません。
+
+**安全性と限界:** 分析には保存済みJSONしか使いません。生成コード実行、ネットワーク送信、ジョブ操作、プログラムの自動更新はありません。出力先は指定した診断ファイルだけです。分析が提示するのは原因の確定ではなく**観測に基づく仮説**であり、人間が変更内容を確認して、同条件の実測で効果を判断する必要があります。
