@@ -164,6 +164,17 @@ def snapshot_workspace(source, destination, max_files=200, max_bytes=10_000_000)
             raise ValueError("sandbox snapshot refuses special files")
         if any(x.startswith(".") for x in rel.parts) or p.name.endswith((".agent-backup", ".agent-tmp")):
             continue
+        # Copy only source files and simple test fixtures, never arbitrary
+        # documents from a job workspace. This is data minimization, not a
+        # substitute for checking source-code literals for secrets.
+        if p.suffix.lower() not in (".py", ".txt", ".md", ".csv", ".json"):
+            continue
+        lower=p.name.lower()
+        if any(word in lower for word in ("secret", "password", "credential", "private_key", "api_key", "token", "id_rsa")):
+            continue
+        # Hard links can alias a file outside the workspace. Refuse these.
+        if p.stat().st_nlink > 1:
+            raise ValueError("sandbox snapshot refuses hard-linked files")
         count+=1
         total+=p.stat().st_size
         if count>max_files or total>max_bytes:
