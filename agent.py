@@ -1136,7 +1136,9 @@ def main():
         print(json.dumps(sandbox_runner.setup_diagnosis(),ensure_ascii=False,indent=2))
     elif a.command=='sandbox-prepare':
         import sandbox_runner
-        print(sandbox_runner.prepare_image(confirmed=a.confirm))
+        result=sandbox_runner.prepare_image(confirmed=a.confirm)
+        print(result)
+        if result.startswith('ERROR:'): raise SystemExit(1)
     elif a.command=='doctor': doctor()
     elif a.command=='stop': (ROOT/'STOP').touch();print('STOP created')
     elif a.command=='clear-stop': (ROOT/'STOP').unlink(missing_ok=True);print('STOP removed')
