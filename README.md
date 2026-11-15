@@ -603,3 +603,35 @@ powershell -NoProfile -File .\sync.ps1 -CheckReleaseTag v3.0.0
 ```
 
 タグの署名と独立した信頼設定が合致しない限り拒否します。現時点では実際に署名済みのRelease配布物を確認していないため、**安全なRelease自動インストール・CI合格照合・旧版への復旧は未実装**です。これらがP0-4段階2の残課題です。
+
+## P0-4 段階2 — 更新前のバックアップ・検証・非破壊的な復旧コピー
+
+開発版mainの更新（`開発版を更新して起動.bat`）では、警告と `DEV-UPDATE` の入力に加え、**Git fetch/merge の前に** `safety_backup.py` によるバックアップ作成・整合性検証を必須化しました。失敗時は更新を中止します。普段の `安全に起動.bat` と `更新して起動.bat` はローカル起動のみです。
+
+バックアップ対象は、存在する `state.sqlite3`、`workspace/`、`benchmark-results/` です。SQLiteはWALファイルの直接コピーではなく、SQLiteのオンラインバックアップAPIで独立したDBファイルへ複製し、`PRAGMA integrity_check` を行います。ファイルごとのSHA-256も記録します。旧バックアップは自動削除しません。
+
+保存先はWindowsで `%LOCALAPPDATA%\AutonomousAgent\backups\snapshot-...`、Linuxで `~/.local/share/AutonomousAgent/backups/snapshot-...` です。**インストール先の外側**に保存されます。
+
+### 手動で作成・確認（実行中のジョブを停止してから）
+
+```powershell
+python -I safety_backup.py create
+python -I safety_backup.py verify --snapshot "$env:LOCALAPPDATA\AutonomousAgent\backups\snapshot-YYYYMMDDTHHMMSSZ-xxxxxxxxxxxx"
+```
+
+### 復元する場合（必ず新しい別フォルダへ）
+
+```powershell
+python -I safety_backup.py recover --snapshot "$env:LOCALAPPDATA\AutonomousAgent\backups\snapshot-YYYYMMDDTHHMMSSZ-xxxxxxxxxxxx" --into "$env:USERPROFILE\AutonomousAgent-Recovered"
+```
+
+`recover` は**元のSQLiteや作業フォルダを上書きしません**。復旧コピーを確認するための操作です。アクティブデータへ戻す安全な切替・自動復旧はまだ未実装です。
+
+### 限界・注意
+
+- 1ファイル100MiB、総量500MiB、最大5000ファイル。超過時は一部を省略せず失敗させ、更新を拒否します。
+- シンボリックリンク・Windows reparse point・ハードリンクを含むファイルは拒否します。
+- SQLiteと別プロセスが編集するワークスペース全体の厳密な同一時点でのスナップショットは保証していません。実行中のタスク・GUI・スケジュールによる編集を停止してください。
+- SHA-256照合は偶発的な破損の検出であり、バックアップフォルダを改ざんできる相手に対する署名ではありません。
+- バックアップにはコード・ジョブの内容・個人情報や秘密が含まれ得ます。共有せず、個人用の安全な保存先に置いてください。
+- **P0-4はまだ部分達成**。実際の署名付きReleaseの配布・CI合格確認・配布物の真正性・コードの原子的切替・失敗時の自動ロールバック・Windows 11実機での総合確認は残っています。
