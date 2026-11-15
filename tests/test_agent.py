@@ -67,7 +67,8 @@ class AgentTests(unittest.TestCase):
             self.assertIn('repeated',row['result'])
             self.assertGreater(row['steps'],3)
             self.assertEqual(guard['stall_recoveries'],agent.MAX_STALL_RECOVERIES)
-            self.assertEqual(revise.call_count,agent.MAX_STALL_RECOVERIES)
+            # The regular 8-step checkpoint may also invoke the mocked planner.
+            self.assertGreaterEqual(revise.call_count,agent.MAX_STALL_RECOVERIES)
     def test_tick_selects_pending(self):
         job=agent.make_job('pending')
         with patch.object(agent,'run') as runner:
