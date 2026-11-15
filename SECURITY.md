@@ -107,3 +107,14 @@ Git command hardening: Git status now requires explicit `allow_git`; protected j
 - Windows PowerShell 5.1 requires UTF-8 BOM for non-ASCII script messages; the updater is saved with BOM and the Windows CI smoke test checks the safe default execution path.
 
 **Unfinished release security:** No official automatically installed trusted release path exists yet. Release artifacts, signed manifests, CI pass verification, archive integrity, old-version rollback, and end-to-end Windows 11 verification remain P0-4 requirements. The first manual bootstrap from older copies is still a developer-controlled action, not a verified production upgrade. Full operating-system isolation is not provided.
+
+## P0-4 stage 2: verified pre-update data snapshots
+
+- Every explicit developer main update must finish a verified backup BEFORE any Git network fetch or merge. Missing Python, missing backup tool, an active agent lock, SQLite corruption, changed workspace files, unsafe paths, unsupported sizes, or verification failure prevents the update.
+- The snapshot is stored outside the Git checkout. SQLite uses the backup API, normalized to a standalone DELETE-journal file, then verified with `PRAGMA integrity_check`. Workspace and benchmark results are copied with per-file SHA-256 checks; no previous backup is overwritten or deleted.
+- Symlinks, Windows reparse points, hardlinked files and special nodes are rejected. Size limits are enforced; malformed recovery paths, traversal, Windows ADS and device names are rejected.
+- Recovery only copies verified data into a new, initially nonexistent directory outside the active installation. It never overwrites an active SQLite file, workspace or Git revision.
+- Snapshot files and manifests are sensitive data. SHA-256 does not authenticate against a malicious actor who can alter both files and manifests. Keep backups in a private user account area.
+- The agent lock restricts concurrent agent execution, but does not establish atomic cross-file consistency against arbitrary external writers. Back up while GUI tasks and scheduled writers are stopped.
+
+Remaining P0-4/P0-5 work: trusted Release distribution and CI/artifact verification, transactional code switching and automatic rollback, live restore with safe shutdown, power-loss/recovery tests, and user's own Windows 11 + Docker/Ollama verification.
