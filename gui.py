@@ -254,6 +254,7 @@ class DesktopApp:
         ttk.Button(bottom,text='Docker公式サイト',command=lambda:webbrowser.open('https://www.docker.com/products/docker-desktop/')).pack(side='left')
         evalrow=ttk.Frame(outer);evalrow.pack(fill='x',pady=(3,0))
         ttk.Button(evalrow,text='実AIの性能を評価（Ollama）',command=self.start_real_benchmark).pack(side='left',padx=(0,9))
+        ttk.Button(evalrow,text='評価結果から改善案を作成',command=self.start_benchmark_diagnosis).pack(side='left',padx=(0,9))
         ttk.Label(evalrow,text='テスト専用環境で実行・生成コードは実行しません').pack(side='left')
 
     def _refresh_periodic(self):
@@ -519,6 +520,23 @@ class DesktopApp:
             return
         self.launch(['sandbox-prepare','--confirm'],'Dockerイメージの準備',
                     on_success=lambda _: self.check_sandbox())
+
+    def start_benchmark_diagnosis(self):
+        """Analyze local saved benchmark results only; never change agent code."""
+        source=ROOT/'benchmark-results'/'real-ollama.json'
+        if not source.is_file():
+            messagebox.showwarning('評価結果がありません',
+                '先に「実AIの性能を評価（Ollama）」で評価を実行してください。'
+                '結果が benchmark-results/real-ollama.json に保存されると分析できます。')
+            return
+        if not messagebox.askyesno('実AI評価の失敗分析',
+            '保存済みの実測レポートを読み、根拠付きの改善候補を作成します。'
+            'Ollamaへの通信、生成コード実行、プログラムの自動修正は行いません。実行しますか？'):
+            return
+        self.launch(['benchmark-diagnose'],'実AIの失敗分析',
+            on_success=lambda _:messagebox.showinfo('改善案を作成しました',
+                'benchmark-results/diagnosis.md を確認してください。'
+                '改善案はまだプログラムに適用されていません。'))
 
     def start_real_benchmark(self):
         """Opt-in real model evaluation; no scheduled or unattended invocation."""
