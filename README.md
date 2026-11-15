@@ -370,3 +370,25 @@ python agent.py run 1 --steps 8
 - Windowsタスクスケジューラは `install-schedule.ps1` を**手動で実行した場合のみ**設定されます。スケジュール実行では、過去にテスト許可したジョブのテストも実行されうるため注意してください。
 - 現時点ではWindows Sandboxまたは隔離VM内で試すことを推奨します。バックアップを取り、管理者権限では実行しないでください。
 
+
+## v1.7 — 生成コードの隔離実行（重要な仕様変更）
+
+**AIが作ったPythonテストをWindows本体で直接実行しない**ように変更しました。GUIとCLIの `allow-tests` は、Docker Linuxコンテナの準備が整っている場合に限り有効に働きます。Docker未導入・停止中・イメージなしの場合には**エラーを出して実行を拒否**します。通常実行への自動フォールバックはありません。
+
+### Windowsでの初回準備
+
+1. Docker Desktopを公式サイト（https://www.docker.com/products/docker-desktop/）からインストール。Linux containers / WSL 2バックエンドを利用し、起動する（Windowsのエディション・仮想化設定・RAMに応じて制約があります）。
+2. PowerShellで一度だけ `docker pull python:3.11-slim` を実行。自動的にはイメージをダウンロードしません。
+3. `python agent.py safety JOB_ID` から `sandbox.available` を確認。
+4. GUIの「Pythonテスト実行を許可（注意）」、または `python agent.py allow-tests JOB_ID` でジョブごとの許可をオンにする。
+
+### 主な制限
+
+Dockerランナーは、生成されたテストを `--network none`、ホスト作業フォルダの読み取り専用マウント、コンテナルートFSの `--read-only`、権限削除、非rootユーザー、CPU/メモリ/PID上限、45秒タイムアウトを使って実行します。コンテナはテスト終了後に削除され、タイムアウト時にも停止を試みます。ローカルDockerソケット/名前付きパイプのみを許可し、リモートDockerやWindowsコンテナは拒否します。
+
+生成されたテストがワークスペースへ書き込むタイプの場合、読み取り専用制限により失敗します。テスト用の一時ファイルはコンテナ内 `/tmp` を利用する必要があります。生成コードはテスト実行中もコンテナの内部で実行され、Windowsホストに対してファイル変更できません（Docker・OSの脆弱性がないことが前提）。
+
+**隔離は絶対安全を意味しません。** Docker Desktop/WSL2にはインストール・仮想化・メモリ・ディスク使用量が伴います。Docker自体の権限を渡したり、Dockerソケットをコンテナにマウントしたりしないこと。未信頼イメージを同じタグで使わないこと。重要ファイルのバックアップも必要です。
+
+`python -m unittest discover -s tests -v` はプロジェクト自身の**信頼済み開発用テスト**であり、生成コードの隔離ルートではありません。実環境の隔離確認はGitHub Actions `Docker sandbox integration` で行います。
+
