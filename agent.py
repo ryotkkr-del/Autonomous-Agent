@@ -1584,7 +1584,7 @@ def doctor():
     except Exception: print('Ollama: not reachable')
 
 def main():
-    parser=argparse.ArgumentParser(description='Autonomous Agent v2.1 — reviewed edits, snapshots and rollback')
+    parser=argparse.ArgumentParser(description='Autonomous Agent v2.4 — safe virtual drafting and evidence-based evaluation')
     sub=parser.add_subparsers(dest='command',required=True)
     n=sub.add_parser('new');n.add_argument('goal')
     for command in ('protect-job','pending'):
@@ -1613,6 +1613,10 @@ def main():
     cr.add_argument('--contains',action='append',default=[],metavar='PATH::TEXT')
     t=sub.add_parser('tick');t.add_argument('--steps',type=int,default=8);t.add_argument('--model',default=MODEL)
     safe=sub.add_parser('safety');safe.add_argument('job_id',type=int,nargs='?')
+    diagnosis=sub.add_parser('benchmark-diagnose',help='read-only analysis of saved real-Ollama results')
+    diagnosis.add_argument('--input',default='benchmark-results/real-ollama.json')
+    diagnosis.add_argument('--output',default='benchmark-results/diagnosis.json')
+    diagnosis.add_argument('--markdown',default='benchmark-results/diagnosis.md')
     real_bench=sub.add_parser('benchmark-real',help='explicit, isolated real-Ollama benchmark')
     real_bench.add_argument('--model',default='gemma3:4b')
     real_bench.add_argument('--steps',type=int,default=14)
@@ -1659,6 +1663,9 @@ def main():
     elif a.command=='safety': print(json.dumps(safety_summary(a.job_id),ensure_ascii=False,indent=2))
     elif a.command=='tick': tick(a.model,a.steps)
     elif a.command=='status': show_jobs()
+    elif a.command=='benchmark-diagnose':
+        from benchmarks.diagnose_ollama import main as run_diagnosis
+        raise SystemExit(run_diagnosis(['--input',a.input,'--output',a.output,'--markdown',a.markdown]))
     elif a.command=='benchmark-real':
         from benchmarks.real_ollama import main as run_real_benchmark
         args=['--model',a.model,'--steps',str(a.steps),'--trials',str(a.trials),
