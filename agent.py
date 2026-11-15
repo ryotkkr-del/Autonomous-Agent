@@ -107,10 +107,13 @@ def connection():
        job_id INTEGER PRIMARY KEY, criteria TEXT NOT NULL DEFAULT '{}',
        stall_recoveries INTEGER NOT NULL DEFAULT 0,
        failures INTEGER NOT NULL DEFAULT 0, retry_after TEXT NOT NULL DEFAULT '',
-       approval_required INTEGER NOT NULL DEFAULT 0)''')
+       approval_required INTEGER NOT NULL DEFAULT 0,
+       draft_mode INTEGER NOT NULL DEFAULT 0)''')
     cols={r['name'] for r in db.execute('PRAGMA table_info(job_controls)')}
     if 'approval_required' not in cols:
         db.execute('ALTER TABLE job_controls ADD COLUMN approval_required INTEGER NOT NULL DEFAULT 0')
+    if 'draft_mode' not in cols:
+        db.execute('ALTER TABLE job_controls ADD COLUMN draft_mode INTEGER NOT NULL DEFAULT 0')
     db.execute('''CREATE TABLE IF NOT EXISTS pending_changes (
        id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL,
        path TEXT NOT NULL, content TEXT NOT NULL, expected_sha TEXT NOT NULL,
@@ -695,7 +698,7 @@ def safety_summary(job_id=None):
             if not row: raise ValueError('unknown job')
         prefs=db.execute('SELECT allow_search FROM agent_preferences WHERE job_id=?',(job_id,)).fetchone() if row else None
         approved=db.execute('SELECT COUNT(*) FROM approved_urls WHERE job_id=?',(job_id,)).fetchone()[0] if row else 0
-        gate=db.execute('SELECT approval_required FROM job_controls WHERE job_id=?',(job_id,)).fetchone() if row else None
+        gate=db.execute('SELECT approval_required,draft_mode FROM job_controls WHERE job_id=?',(job_id,)).fetchone() if row else None
     import sandbox_runner
     docker_ready, docker_reason=sandbox_runner.availability()
     return {
@@ -703,6 +706,7 @@ def safety_summary(job_id=None):
         'sandbox':{'backend':'Docker Linux containers','available':docker_ready,'detail':docker_reason},
         'permissions':{
             'file_edit_approval':bool(gate and gate['approval_required']),
+            'virtual_draft':bool(gate and gate['draft_mode']),
             'python_tests':bool(row['allow_tests']) if row else False,
             'local_git_checkpoint':bool(row['allow_git']) if row else False,
             'web_search':bool(prefs['allow_search']) if prefs else False,
@@ -775,6 +779,25 @@ def clear_run_failure(db,job_id):
 def approval_enabled(db,job_id):
     row=db.execute('SELECT approval_required FROM job_controls WHERE job_id=?',(job_id,)).fetchone()
     return bool(row and row['approval_required'])
+
+
+def draft_enabled(db,job_id):
+    row=db.execute('SELECT approval_required,draft_mode FROM job_controls WHERE job_id=?',(job_id,)).fetchone()
+    return bool(row and row['approval_required'] and row['draft_mode'])
+
+
+def enable_draft(job_id):
+    """Opt-in for existing protected jobs; never discard pending proposals."""
+    with connection() as db:
+        job=db.execute('SELECT status FROM jobs WHERE id=?',(job_id,)).fetchone()
+        if not job: raise ValueError('unknown job')
+        if job['status'] in ('running','awaiting_approval'):
+            raise ValueError('cannot switch draft mode during active review')
+        if db.execute("SELECT id FROM pending_changes WHERE job_id=? AND state='pending'",(job_id,)).fetchone():
+            raise ValueError('resolve pending changes before enabling draft mode')
+        db.execute('INSERT INTO job_controls(job_id,approval_required,draft_mode) VALUES(?,1,1) '
+                   'ON CONFLICT(job_id) DO UPDATE SET approval_required=1,draft_mode=1',(job_id,))
+    print('Isolated draft mode enabled for job #'+str(job_id))
 
 
 def protect_job(job_id):
@@ -1027,13 +1050,15 @@ def resolve_change(job_id,change_id,approve=False):
                 return 'Approved edit #'+str(change_id)+': '+result
 
 
-def make_job(goal, require_approval=False):
+def make_job(goal, require_approval=False, draft_mode=False):
+    if draft_mode and not require_approval: raise ValueError('draft mode requires human approval')
     with connection() as db:
         c=db.execute('INSERT INTO jobs(goal,status,created,updated) VALUES(?,?,?,?)',(goal,'paused',now(),now()))
         job_id=c.lastrowid
         db.execute('UPDATE jobs SET workspace_rel=? WHERE id=?',(f'jobs/{job_id}',job_id))
         if require_approval:
-            db.execute('INSERT INTO job_controls(job_id,approval_required) VALUES(?,1)',(job_id,))
+            db.execute('INSERT INTO job_controls(job_id,approval_required,draft_mode) VALUES(?,?,?)',
+                       (job_id,1,int(draft_mode)))
     return job_id
 
 @contextmanager
@@ -1423,6 +1448,7 @@ def main():
     n=sub.add_parser('new');n.add_argument('goal')
     for command in ('protect-job','pending'):
         p=sub.add_parser(command);p.add_argument('job_id',type=int)
+    p=sub.add_parser('enable-draft');p.add_argument('job_id',type=int)
     for command in ('change-preview','approve-change','reject-change'):
         p=sub.add_parser(command);p.add_argument('job_id',type=int);p.add_argument('change_id',type=int)
     p=sub.add_parser('approve-batch');p.add_argument('job_id',type=int);p.add_argument('change_ids',type=int,nargs='+')
@@ -1451,9 +1477,10 @@ def main():
     prep.add_argument('--confirm',action='store_true',help='explicitly approve downloading the official Python image from Docker Hub')
     sub.add_parser('status');sub.add_parser('doctor');sub.add_parser('stop');sub.add_parser('clear-stop')
     a=parser.parse_args();ensure_workspace()
-    if a.command=='new': print('Created job #',make_job(a.goal,require_approval=True))
+    if a.command=='new': print('Created job #',make_job(a.goal,require_approval=True,draft_mode=True))
     elif a.command=='run': run(a.job_id,a.model,a.steps,a.codex)
     elif a.command=='protect-job': protect_job(a.job_id)
+    elif a.command=='enable-draft': enable_draft(a.job_id)
     elif a.command=='pending': print(json.dumps(pending_changes(a.job_id),ensure_ascii=False,indent=2))
     elif a.command=='change-preview': print(json.dumps(change_preview(a.job_id,a.change_id),ensure_ascii=False,indent=2))
     elif a.command=='approve-change': print(resolve_change(a.job_id,a.change_id,approve=True))
