@@ -105,6 +105,12 @@ def _snapshot_sqlite(source: Path, dest: Path) -> bool:
          closing(sqlite3.connect(dest, timeout=8)) as backup:
         live.backup(backup, pages=256, sleep=0.01)
         backup.commit()
+        # SQLite backups can retain WAL journal mode. Normalize to a
+        # standalone DB before publication; avoid auxiliary WAL/SHM files.
+        journal = backup.execute("PRAGMA journal_mode=DELETE").fetchone()
+        if not journal or journal[0].lower() != "delete":
+            raise ValueError("SQLite backup could not be made standalone")
+        backup.commit()
         check = backup.execute("PRAGMA integrity_check").fetchone()
         if not check or check[0] != "ok":
             raise ValueError("SQLite backup failed integrity_check")
@@ -204,7 +210,7 @@ def verify_snapshot(snapshot: Path) -> dict:
     if metadata["database_present"]:
         # Reopen SQLite read-only and check integrity without mutating backup.
         path = snapshot / "state.sqlite3"
-        with closing(sqlite3.connect(path.resolve(strict=True).as_uri() + "?mode=ro", uri=True)) as conn:
+        with closing(sqlite3.connect(path.resolve(strict=True).as_uri() + "?mode=ro&immutable=1", uri=True)) as conn:
             check = conn.execute("PRAGMA integrity_check").fetchone()
             if not check or check[0] != "ok":
                 raise ValueError("backup SQLite integrity_check failed")
