@@ -1,4 +1,4 @@
-# Autonomous Agent v2.2
+# Autonomous Agent v2.3
 
 Windows用のローカル自律AIエージェント。**GitHubの`main`にアプリ本体とGUIを公開済み**です。既存のv1.1以前のコード・SQLiteデータ形式を引き継いでいます。
 
@@ -495,3 +495,29 @@ python agent.py enable-draft OLD_JOB_ID
 ```
 
 **既知の制限：** 変更案の検査・テストに失敗した場合、AIへエラーログを渡して修正を促しますが、実際の正解を保証しません。プレビュー/レビューにはモデルの自己評価が含まれない部分があります。1件ごとに承認する従来モードも既存ジョブでは引き続き利用できます。保護ジョブではGitチェックポイントやCodexの直接実行は禁止されたままです。
+
+## v2.3 — 実Ollamaによる性能評価（ローカル実行）
+
+v1.5の模擬AIシナリオとは別に、**実際のローカルOllamaモデルに計画・判断させる**ベンチマークを追加しました。通常のジョブDBには接続せず、ケースごとに使い捨てのSQLite/ワークスペースを生成します。**生成されたファイルは自動承認しません。AI生成Pythonコードは実行しません。Web検索・Git・Codex・Pythonテストの権限は全て無効**です。
+
+WindowsでOllama起動済み、`ollama pull gemma3:4b`実施済みの状態で、プロジェクトのフォルダから:
+
+```powershell
+python benchmarks/real_ollama.py --model gemma3:4b --steps 14 --trials 2 --output benchmark-results/gemma3-v23.json
+```
+
+実際のモデルの動作を3タスク（Markdown教材・厳密なJSONファイル・Python関数の定義）で採点し、ステップ数、所要秒数、再計画回数、エラーイベント、失敗分類、モデルダイジェストをJSONに保存します。繰り返し回数やシナリオを限定できます:
+
+```powershell
+python benchmarks/real_ollama.py --scenarios note,json --trials 1 --steps 10
+```
+
+別モデルとの結果比較:
+
+```powershell
+python benchmarks/compare_ollama.py benchmark-results/before.json benchmark-results/after.json --output benchmark-results/comparison.json
+```
+
+**評価の注意点:** Pythonシナリオは関数名・引数・構文と副作用の少ないコード構造を**静的に検査するのみ**で、計算結果の正しさを証明しません。教材の内容品質や文章の正確さも完全には採点できません。ベンチマークの`passed`は実用的な信頼性や安全性を保証しません。同じモデルでも推論時の確率性、PC負荷、プロンプト変更で結果が変わります。比較は同じシナリオ・ステップ数・試行回数を使ってください。
+
+**テストと実測の区別:** GitHub Actionsはコードの動作を模擬した回帰テストと隔離テストのみ実施します。GitHub Actionsで`gemma3:4b`の推論実測を行ったわけではなく、実測はOllamaがインストールされたPCで実行して初めて結果が出ます。
