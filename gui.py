@@ -12,7 +12,9 @@ import subprocess
 import sys
 import tempfile
 import threading
+import queue
 import json
+import stat
 import webbrowser
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
@@ -21,6 +23,69 @@ ROOT = Path(__file__).resolve().parent
 DB = ROOT / 'state.sqlite3'
 STOP = ROOT / 'STOP'
 MAX_GOAL = 2000
+
+
+def request_stop_marker(path=STOP):
+    """Create only an empty STOP marker; never follow or touch an existing link."""
+    path = Path(path)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    def verify_existing():
+        st = path.lstat()
+        if (not stat.S_ISREG(st.st_mode) or st.st_nlink != 1 or
+                getattr(st, "st_file_attributes", 0) &
+                getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)):
+            raise ValueError("STOP marker must be an ordinary, non-linked file")
+
+    # Windows returns PermissionError rather than FileExistsError when the
+    # destination is a directory. Check pre-existing paths before O_EXCL.
+    # The exclusive creation still prevents writing through a raced-in link.
+    if os.path.lexists(path):
+        verify_existing()
+        return
+    try:
+        fd = os.open(path, flags, 0o600)
+    except FileExistsError:
+        verify_existing()
+    else:
+        os.close(fd)
+
+
+
+
+def format_trial_diagnostic(report):
+    """Render only known statuses; never expose raw Docker/localhost output."""
+    if not isinstance(report, dict):
+        return False, '診断結果を読み取れません。'
+    ollama = report.get('ollama')
+    docker = report.get('docker')
+    ollama_status = ollama.get('status') if isinstance(ollama, dict) else ''
+    docker_status = docker.get('status') if isinstance(docker, dict) else ''
+    ready = (report.get('assessment') == 'runtime_prerequisites_found_not_e2e'
+             and report.get('static_assessment') == 'manual_trial_prerequisites_found'
+             and ollama_status == 'ready' and docker_status == 'ready'
+             and not report.get('blockers'))
+    if ollama_status == 'ready':
+        ollama_line = 'Ollama: ローカルで必要なモデルを検出'
+    elif ollama_status == 'model_missing':
+        ollama_line = 'Ollama: 接続可能ですがgemma3:4bがありません'
+    else:
+        ollama_line = 'Ollama: 接続・状態を確認できません'
+    if docker_status == 'ready':
+        docker_line = 'Docker: Linuxエンジンと必要なイメージを検出'
+    else:
+        docker_line = 'Docker: テスト実行用の環境が未準備です'
+    static_line = ('基本環境: 必須ファイルとPython環境の確認は完了'
+                   if report.get('static_assessment') == 'manual_trial_prerequisites_found'
+                   else '基本環境: 不足または確認できない項目があります')
+    heading = ('周辺環境の準備を確認しました（実機E2E合格ではありません）'
+               if ready else '初回試用の準備に不足があります')
+    message = (
+        heading + '\n\n' + static_line + '\n' + ollama_line + '\n' + docker_line
+        + '\n\nこの診断では、GUI動作・実際のAI推論・Docker隔離実行・'
+          '停止や復旧・安全な更新は検証していません。'
+          '\n設定の変更やダウンロードは行っていません。'
+    )
+    return ready, message
 
 
 def load_jobs(db_path=DB):
@@ -166,12 +231,18 @@ class DesktopApp:
         self.steps = tk.IntVar(value=8)
         self.details_label = tk.StringVar(value='ジョブを選ぶと詳細が表示されます')
         self.last_action_label = tk.StringVar(value='')
+        self._trial_queue = queue.Queue(maxsize=1)
+        self._trial_running = False
+        self._closing = False
+        self._closed = False
         self.tests_enabled = tk.BooleanVar(value=False)
         self.git_enabled = tk.BooleanVar(value=False)
         self.search_enabled = tk.BooleanVar(value=False)
         self._build()
         self.refresh()
+        root.protocol('WM_DELETE_WINDOW', self.request_close)
         root.after(350, self._poll)
+        root.after(2000, self._refresh_periodic)
 
     def _build(self):
         self.root.configure(bg='#f6f7f9')
@@ -248,6 +319,7 @@ class DesktopApp:
         helptext='初回は Ollama を起動し、ollama pull gemma3:4b を実行してください。Codex はこの画面から自動起動しません。'
         ttk.Label(outer,text=helptext,wraplength=840).pack(anchor='w')
         bottom=ttk.Frame(outer);bottom.pack(fill='x',pady=(5,0))
+        ttk.Button(bottom,text='初回診断（変更なし）',command=self.check_trial_runtime).pack(side='left',padx=(0,8))
         ttk.Button(bottom,text='接続・環境を確認',command=lambda:self.launch(['doctor'],'接続確認')).pack(side='left',padx=(0,8))
         ttk.Button(bottom,text='Docker環境を診断',command=self.check_sandbox).pack(side='left',padx=(0,8))
         ttk.Button(bottom,text='Pythonイメージを準備',command=self.prepare_sandbox).pack(side='left',padx=(0,8))
@@ -261,6 +333,8 @@ class DesktopApp:
         ttk.Label(evalrow,text='テスト専用環境で実行・生成コードは実行しません').pack(side='left')
 
     def _refresh_periodic(self):
+        if self._closed:
+            return
         # External scheduled runs can update SQLite independently of this GUI.
         if self.worker is None and self.output_file is None:
             self.refresh()
@@ -343,6 +417,9 @@ class DesktopApp:
         return self.selected_id
 
     def launch(self,args,title, on_success=None):
+        if self._closing:
+            messagebox.showinfo('終了処理中', 'エージェントの停止完了を待っています。')
+            return False
         if self.proc is not None and self.proc.poll() is None:
             messagebox.showinfo('実行中','実行中の処理が終わるまで操作できません')
             return False
@@ -368,6 +445,21 @@ class DesktopApp:
         return True
 
     def _poll(self):
+        if self._closed:
+            return
+        try:
+            diagnostic = self._trial_queue.get_nowait()
+        except queue.Empty:
+            pass
+        else:
+            self._trial_running = False
+            if not self._closing:
+                self.status_label.set('初回診断が終了しました')
+                is_ready, message = format_trial_diagnostic(diagnostic)
+                if is_ready:
+                    messagebox.showinfo('初回診断（正式運用未達）', message)
+                else:
+                    messagebox.showwarning('初回診断（準備を確認）', message)
         if self.output_file is not None:
             try:
                 with self.output_file.open('r',encoding='utf-8',errors='replace') as fp:
@@ -383,7 +475,7 @@ class DesktopApp:
                 if getattr(self,'_finish_pending',False):
                     code=self.proc.returncode if self.proc else -1
                     self.status_label.set('完了' if code==0 else f'エラー (終了コード {code})')
-                    on_success=self._on_success if code==0 else None
+                    on_success=self._on_success if code==0 and not self._closing else None
                     if on_success:
                         try:on_success(self.last_output)
                         except Exception as exc:messagebox.showerror('処理後のエラー',str(exc))
@@ -392,11 +484,55 @@ class DesktopApp:
                     try:self.output_file.unlink(missing_ok=True)
                     except OSError:pass
                     self.output_file=None
-                    self.refresh()
+                    if not self._closing:
+                        self.refresh()
                 else:self._finish_pending=True
             else:self._finish_pending=False
+        if self._closing and self._ready_to_close():
+            self._finish_close()
+            return
         self.root.after(350,self._poll)
-        self.root.after(2000,self._refresh_periodic)
+
+    def _ready_to_close(self):
+        """A GUI close cannot leave its own agent subprocess running."""
+        if self.worker is not None:
+            return False
+        return self.proc is None or self.proc.poll() is not None
+
+    def _finish_close(self):
+        if self._closed or not self._ready_to_close():
+            return
+        self._closed = True
+        self.root.destroy()
+
+    def request_close(self):
+        """Ask the user, create STOP, and wait without blocking Tk or killing jobs."""
+        if self._closed:
+            return
+        if self._closing:
+            messagebox.showinfo(
+                '停止待機中',
+                '現在の操作の終了を待っています。GUIを閉じても安全な状態になるまで待機します。')
+            return
+        if self._ready_to_close():
+            self._finish_close()
+            return
+        if not messagebox.askyesno(
+                '作業中の終了',
+                'エージェントの処理が進行中です。\n'
+                '停止要求を送信し、処理が実際に終了するまで待ってからGUIを閉じますか？\n'
+                '実行中の操作が完了するまでは待機します。強制終了はしません。'):
+            return
+        try:
+            request_stop_marker()
+        except (OSError, ValueError):
+            messagebox.showwarning(
+                '停止できません',
+                'STOPの安全な作成に失敗しました。実行を放置せず状態を確認してください。')
+            return
+        self._closing = True
+        self.status_label.set('停止要求中：実行中の操作の終了を待っています')
+        self._append('GUIの終了要求: STOPを送信しました。子プロセス終了を待機します。\n')
 
     def create_goal(self):
         try:goal=validate_goal(self.goal.get())
@@ -409,6 +545,9 @@ class DesktopApp:
         self.refresh(selected=number)
 
     def run_job(self):
+        if self._closing:
+            messagebox.showinfo('終了処理中', '停止完了まで新しい作業を開始できません。')
+            return
         job_id=self._current_job()
         if job_id is None:return
         job=self.jobs[str(job_id)]
@@ -430,7 +569,11 @@ class DesktopApp:
 
     def pause(self):
         # STOP is checked between actions. Does not forcibly terminate an action.
-        STOP.touch()
+        try:
+            request_stop_marker()
+        except (OSError, ValueError):
+            messagebox.showwarning('停止に失敗', 'STOPを安全に作成できません。作業を継続しないで状態を確認してください。')
+            return
         self.status_label.set('停止を要求しました（現在の操作が終わってから停止）')
         self._append('停止要求を送信しました。\n')
 
@@ -498,6 +641,37 @@ class DesktopApp:
             'CodexとGitの自動書き込みは保護対象ジョブで無効化します。'
             'コンテナを突破する脆弱性やDocker自体の危険は残ります。'
             '隔離が必要ならWindows Sandboxまたは仮想マシンを利用してください。')
+
+    def check_trial_runtime(self):
+        """Only a user click can start the local read-only probes.
+
+        Worker threads never call Tk APIs; _poll handles the report on the
+        GUI thread. The agent execution path is unchanged.
+        """
+        if self._trial_running:
+            messagebox.showinfo('初回診断', '既に診断を実行しています。')
+            return
+        self._trial_running = True
+        self.status_label.set('初回診断中（設定変更なし）')
+
+        def inspect():
+            try:
+                from windows_runtime_probe import inspect_runtime
+                result = inspect_runtime()
+            except Exception:
+                # Never surface local paths, private config, or exception text.
+                result = {'assessment': 'not_ready',
+                          'static_assessment': 'unknown',
+                          'ollama': {'status': 'unavailable'},
+                          'docker': {'status': 'unavailable'}}
+            self._trial_queue.put(result)
+
+        try:
+            threading.Thread(target=inspect, daemon=True).start()
+        except Exception:
+            self._trial_running = False
+            self.status_label.set('初回診断を開始できません')
+            messagebox.showwarning('初回診断', '診断スレッドを開始できません。')
 
     def check_sandbox(self):
         """Same diagnostic used by CLI; run without blocking the Tk event loop."""
