@@ -19,6 +19,7 @@ import urllib.error
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import release_candidate as candidate
 import release_policy
+import release_maintenance_guard
 
 MAX_MANIFEST_BYTES = 2_000_000
 
@@ -180,15 +181,23 @@ def main(argv=None) -> int:
     parser.add_argument("--candidate", required=True, type=Path)
     parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parent)
     parser.add_argument("--trust-file", type=Path)
+    parser.add_argument("--with-maintenance-lock", action="store_true",
+                        help="require existing STOP and hold agent.lock during the read-only check")
     args = parser.parse_args(argv)
     try:
-        outcome = verify_staged_candidate(args.candidate, args.repo, args.trust_file)
+        if args.with_maintenance_lock:
+            with release_maintenance_guard.hold_stop_lock(args.repo):
+                outcome = verify_staged_candidate(args.candidate, args.repo, args.trust_file)
+        else:
+            outcome = verify_staged_candidate(args.candidate, args.repo, args.trust_file)
     except (OSError, ValueError, KeyError, TypeError, UnicodeError,
             subprocess.TimeoutExpired, urllib.error.URLError) as exc:
         print("PREFLIGHT REFUSED:", str(exc)[:300], file=sys.stderr)
         return 2
     print(json.dumps(outcome, ensure_ascii=False, indent=2))
     print("READ ONLY: nothing installed, executed, switched or rolled back.")
+    if args.with_maintenance_lock:
+        print("Maintenance lock released: this check is NOT a future activation permit.")
     return 0
 
 
