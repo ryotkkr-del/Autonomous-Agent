@@ -74,6 +74,18 @@ class AgentTests(unittest.TestCase):
         with patch.object(agent,'run') as runner:
             agent.tick('dummy',3)
             runner.assert_called_once_with(job,'dummy',3)
+    def test_tick_never_auto_retries_crash_stale_running_job(self):
+        job = agent.make_job('interrupted')
+        with agent.connection() as db:
+            db.execute("UPDATE jobs SET status='running' WHERE id=?", (job,))
+        with patch.object(agent, 'run') as runner:
+            agent.tick('dummy', 3)
+            runner.assert_not_called()
+        with agent.connection() as db:
+            self.assertEqual(db.execute(
+                'SELECT status FROM jobs WHERE id=?', (job,)
+            ).fetchone()['status'], 'running')
+
     def test_tick_respects_stop(self):
         agent.make_job('pending')
         (self.root/'STOP').touch()
