@@ -4,6 +4,8 @@
 
 Windows用のローカル自律AIエージェント。**GitHubの`main`にアプリ本体とGUIを公開済み**です。既存のv1.1以前のコード・SQLiteデータ形式を引き継いでいます。
 
+初回試用は [FIRST_TRIAL.md](FIRST_TRIAL.md) を先に確認してください。通常の試用は `main` から、最新の安全機構の開発用検証はDraft PR #1から行います。PR版に追加した `trial_readiness.py` は設定変更・外部通信を行わない静的診断で、まだ `main` には含まれていません。診断成功も実機の安全性を保証しません。
+
 ## セットアップ（ZIPを毎回ダウンロードする必要はありません）
 
 WindowsにPython 3.11以降、Git for Windows、Ollamaをインストールしてください。
