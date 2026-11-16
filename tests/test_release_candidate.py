@@ -17,7 +17,7 @@ SHA = "1" * 40
 def ci_record(workflow, commit=SHA, status="completed", conclusion="success",
               branch="main", event="push", run_id=10, repository=None):
     return {
-        "path": candidate.REPOSITORY + "/" + workflow + "@refs/heads/main",
+        "path": workflow,  # exact shape returned by the live GitHub Actions API
         "head_sha": commit, "head_branch": branch, "event": event,
         "id": run_id, "run_attempt": 1,
         "status": status, "conclusion": conclusion,
@@ -37,6 +37,12 @@ class CandidatePolicyTests(unittest.TestCase):
         info = candidate.verify_ci(SHA, ci_fixture())
         self.assertEqual(set(info), candidate.WORKFLOWS)
         self.assertEqual({x["commit"] for x in info.values()}, {SHA})
+
+    def test_repository_prefixed_workflow_path_also_supported(self):
+        data = ci_fixture()
+        for entry in data["workflow_runs"]:
+            entry["path"] = candidate.REPOSITORY + "/" + entry["path"] + "@refs/heads/main"
+        self.assertEqual(set(candidate.verify_ci(SHA, data)), candidate.WORKFLOWS)
 
     def test_missing_or_failed_ci_refuses(self):
         normal = ci_fixture()
