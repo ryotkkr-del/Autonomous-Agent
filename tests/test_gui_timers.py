@@ -38,6 +38,8 @@ class GuiTimerTests(unittest.TestCase):
     def test_frequent_polling_does_not_spawn_new_refresh_loops(self):
         app = object.__new__(gui.DesktopApp)
         app.root = FakeRoot()
+        app._closed = False
+        app._closing = False
         app._trial_queue = queue.Queue(maxsize=1)
         app.output_file = None
         for _ in range(100):
@@ -51,6 +53,8 @@ class GuiTimerTests(unittest.TestCase):
     def test_refresh_loop_rearms_exactly_once_per_tick(self):
         app = object.__new__(gui.DesktopApp)
         app.root = FakeRoot()
+        app._closed = False
+        app._closing = False
         app.worker = None
         app.output_file = None
         with patch.object(gui.DesktopApp, "refresh") as refresh:
@@ -64,6 +68,8 @@ class GuiTimerTests(unittest.TestCase):
     def test_refresh_skips_db_during_running_child_process(self):
         app = object.__new__(gui.DesktopApp)
         app.root = FakeRoot()
+        app._closed = False
+        app._closing = False
         app.worker = object()
         app.output_file = None
         with patch.object(gui.DesktopApp, "refresh") as refresh:
@@ -74,6 +80,8 @@ class GuiTimerTests(unittest.TestCase):
     def test_refresh_skips_db_during_log_handling(self):
         app = object.__new__(gui.DesktopApp)
         app.root = FakeRoot()
+        app._closed = False
+        app._closing = False
         app.worker = None
         app.output_file = "synthetic log path, not accessed"
         with patch.object(gui.DesktopApp, "refresh") as refresh:
