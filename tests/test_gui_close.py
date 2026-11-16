@@ -97,9 +97,10 @@ class CloseSafetyTests(unittest.TestCase):
 
     def test_busy_close_requests_stop_but_does_not_destroy_or_kill(self):
         self.running()
+        real_stop = gui.request_stop_marker
         with patch.object(gui.messagebox, "askyesno", return_value=True), \
              patch.object(gui, "request_stop_marker",
-                          side_effect=lambda: gui.request_stop_marker(self.stop)):
+                          side_effect=lambda: real_stop(self.stop)):
             # Use the real helper bound to the test-specific path.
             gui.DesktopApp.request_close(self.app)
         self.assertTrue(self.stop.exists())
@@ -162,7 +163,8 @@ class CloseSafetyTests(unittest.TestCase):
         self.app.proc.poll.return_value = 0
         self.app.proc.returncode = 0
         self.app._finish_pending = True
-        self.app._on_success = Mock()
+        on_success = Mock()
+        self.app._on_success = on_success
         self.app.last_output = ""
         self.app.output_pos = 0
         self.app.refresh = Mock()
@@ -170,7 +172,8 @@ class CloseSafetyTests(unittest.TestCase):
         log.write_bytes(b"completed\n")
         self.app.output_file = log
         gui.DesktopApp._poll(self.app)
-        self.app._on_success is None
+        on_success.assert_not_called()
+        self.assertIsNone(self.app._on_success)
         self.app.refresh.assert_not_called()
         self.app.root.destroy.assert_called_once_with()
         self.assertTrue(self.app._closed)
