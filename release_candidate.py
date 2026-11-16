@@ -99,8 +99,9 @@ def verify_ci(commit: str, response: dict) -> dict[str, dict]:
         if not isinstance(path, str):
             continue
         workflow = path.split("@", 1)[0]
-        if workflow.startswith(REPOSITORY + "/"):
-            workflow = workflow[len(REPOSITORY) + 1:]
+        if not workflow.startswith(REPOSITORY + "/"):
+            continue
+        workflow = workflow[len(REPOSITORY) + 1:]
         if workflow not in WORKFLOWS:
             continue
         if (run.get("head_sha") != commit or run.get("head_branch") != "main"
@@ -110,8 +111,7 @@ def verify_ci(commit: str, response: dict) -> dict[str, dict]:
             continue
         # The workflow name alone is not sufficient; avoid impostor runs.
         repository = run.get("repository")
-        if (isinstance(repository, dict) and
-                repository.get("full_name") != REPOSITORY):
+        if not isinstance(repository, dict) or repository.get("full_name") != REPOSITORY:
             continue
         old = relevant.get(workflow)
         if old is None or (run["id"], run["run_attempt"]) > (
@@ -172,7 +172,7 @@ def _expected_tree(repo: Path, commit: str) -> dict[str, tuple[str, int]]:
             continue
         try:
             meta, rawname = entry.split(b"\t", 1)
-            mode, kind, object_sha, size_text = meta.decode("ascii").split(" ")
+            mode, kind, object_sha, size_text = meta.decode("ascii").split()
             name = _tree_path(rawname.decode("utf-8", errors="strict"))
             size = int(size_text)
         except (ValueError, UnicodeDecodeError) as exc:
