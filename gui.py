@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import queue
 import json
 import webbrowser
 import tkinter as tk
@@ -21,6 +22,39 @@ ROOT = Path(__file__).resolve().parent
 DB = ROOT / 'state.sqlite3'
 STOP = ROOT / 'STOP'
 MAX_GOAL = 2000
+
+
+def format_trial_diagnostic(report):
+    """Render only known statuses; never expose raw Docker/localhost output."""
+    if not isinstance(report, dict):
+        return False, '診断結果を読み取れません。'
+    ready = report.get('assessment') == 'runtime_prerequisites_found_not_e2e'
+    ollama = report.get('ollama')
+    docker = report.get('docker')
+    ollama_status = ollama.get('status') if isinstance(ollama, dict) else ''
+    docker_status = docker.get('status') if isinstance(docker, dict) else ''
+    if ollama_status == 'ready':
+        ollama_line = 'Ollama: ローカルで必要なモデルを検出'
+    elif ollama_status == 'model_missing':
+        ollama_line = 'Ollama: 接続可能ですがgemma3:4bがありません'
+    else:
+        ollama_line = 'Ollama: 接続・状態を確認できません'
+    if docker_status == 'ready':
+        docker_line = 'Docker: Linuxエンジンと必要なイメージを検出'
+    else:
+        docker_line = 'Docker: テスト実行用の環境が未準備です'
+    static_line = ('基本環境: 必須ファイルとPython環境の確認は完了'
+                   if report.get('static_assessment') == 'manual_trial_prerequisites_found'
+                   else '基本環境: 不足または確認できない項目があります')
+    heading = ('周辺環境の準備を確認しました（実機E2E合格ではありません）'
+               if ready else '初回試用の準備に不足があります')
+    message = (
+        heading + '\n\n' + static_line + '\n' + ollama_line + '\n' + docker_line
+        + '\n\nこの診断では、GUI動作・実際のAI推論・Docker隔離実行・'
+          '停止や復旧・安全な更新は検証していません。'
+          '\n設定の変更やダウンロードは行っていません。'
+    )
+    return ready, message
 
 
 def load_jobs(db_path=DB):
@@ -166,6 +200,8 @@ class DesktopApp:
         self.steps = tk.IntVar(value=8)
         self.details_label = tk.StringVar(value='ジョブを選ぶと詳細が表示されます')
         self.last_action_label = tk.StringVar(value='')
+        self._trial_queue = queue.Queue(maxsize=1)
+        self._trial_running = False
         self.tests_enabled = tk.BooleanVar(value=False)
         self.git_enabled = tk.BooleanVar(value=False)
         self.search_enabled = tk.BooleanVar(value=False)
@@ -248,6 +284,7 @@ class DesktopApp:
         helptext='初回は Ollama を起動し、ollama pull gemma3:4b を実行してください。Codex はこの画面から自動起動しません。'
         ttk.Label(outer,text=helptext,wraplength=840).pack(anchor='w')
         bottom=ttk.Frame(outer);bottom.pack(fill='x',pady=(5,0))
+        ttk.Button(bottom,text='初回診断（変更なし）',command=self.check_trial_runtime).pack(side='left',padx=(0,8))
         ttk.Button(bottom,text='接続・環境を確認',command=lambda:self.launch(['doctor'],'接続確認')).pack(side='left',padx=(0,8))
         ttk.Button(bottom,text='Docker環境を診断',command=self.check_sandbox).pack(side='left',padx=(0,8))
         ttk.Button(bottom,text='Pythonイメージを準備',command=self.prepare_sandbox).pack(side='left',padx=(0,8))
@@ -368,6 +405,18 @@ class DesktopApp:
         return True
 
     def _poll(self):
+        try:
+            diagnostic = self._trial_queue.get_nowait()
+        except queue.Empty:
+            pass
+        else:
+            self._trial_running = False
+            self.status_label.set('初回診断が終了しました')
+            is_ready, message = format_trial_diagnostic(diagnostic)
+            if is_ready:
+                messagebox.showinfo('初回診断（正式運用未達）', message)
+            else:
+                messagebox.showwarning('初回診断（準備を確認）', message)
         if self.output_file is not None:
             try:
                 with self.output_file.open('r',encoding='utf-8',errors='replace') as fp:
@@ -498,6 +547,37 @@ class DesktopApp:
             'CodexとGitの自動書き込みは保護対象ジョブで無効化します。'
             'コンテナを突破する脆弱性やDocker自体の危険は残ります。'
             '隔離が必要ならWindows Sandboxまたは仮想マシンを利用してください。')
+
+    def check_trial_runtime(self):
+        """Only a user click can start the local read-only probes.
+
+        Worker threads never call Tk APIs; _poll handles the report on the
+        GUI thread. The agent execution path is unchanged.
+        """
+        if self._trial_running:
+            messagebox.showinfo('初回診断', '既に診断を実行しています。')
+            return
+        self._trial_running = True
+        self.status_label.set('初回診断中（設定変更なし）')
+
+        def inspect():
+            try:
+                from windows_runtime_probe import inspect_runtime
+                result = inspect_runtime()
+            except Exception:
+                # Never surface local paths, private config, or exception text.
+                result = {'assessment': 'not_ready',
+                          'static_assessment': 'unknown',
+                          'ollama': {'status': 'unavailable'},
+                          'docker': {'status': 'unavailable'}}
+            self._trial_queue.put(result)
+
+        try:
+            threading.Thread(target=inspect, daemon=True).start()
+        except Exception:
+            self._trial_running = False
+            self.status_label.set('初回診断を開始できません')
+            messagebox.showwarning('初回診断', '診断スレッドを開始できません。')
 
     def check_sandbox(self):
         """Same diagnostic used by CLI; run without blocking the Tk event loop."""
