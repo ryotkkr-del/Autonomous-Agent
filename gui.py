@@ -211,6 +211,7 @@ class DesktopApp:
         self._build()
         self.refresh()
         root.after(350, self._poll)
+        root.after(2000, self._refresh_periodic)
 
     def _build(self):
         self.root.configure(bg='#f6f7f9')
@@ -448,7 +449,6 @@ class DesktopApp:
                 else:self._finish_pending=True
             else:self._finish_pending=False
         self.root.after(350,self._poll)
-        self.root.after(2000,self._refresh_periodic)
 
     def create_goal(self):
         try:goal=validate_goal(self.goal.get())
