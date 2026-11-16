@@ -167,5 +167,28 @@ class ReleasePreflightTests(unittest.TestCase):
 
 
 
+    def test_optional_maintenance_guard_holds_lock_during_preflight(self):
+        (self.repo / "agent.lock").write_bytes(b"0")
+        (self.repo / "STOP").write_bytes(b"")
+        with patch.object(preflight, "verify_staged_candidate",
+                          return_value={"status": "verified_read_only_not_activated"}) as verified:
+            result = preflight.main(["--candidate", str(self.stage),
+                                     "--repo", str(self.repo),
+                                     "--with-maintenance-lock"])
+        self.assertEqual(result, 0)
+        verified.assert_called_once()
+        self.assertEqual((self.repo / "agent.lock").read_bytes(), b"0")
+
+    def test_optional_maintenance_guard_blocks_missing_stop_before_preflight(self):
+        (self.repo / "agent.lock").write_bytes(b"0")
+        with patch.object(preflight, "verify_staged_candidate",
+                          side_effect=AssertionError("must not verify without STOP")):
+            result = preflight.main(["--candidate", str(self.stage),
+                                     "--repo", str(self.repo),
+                                     "--with-maintenance-lock"])
+        self.assertEqual(result, 2)
+
+
+
 if __name__ == "__main__":
     unittest.main()
