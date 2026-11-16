@@ -28,11 +28,14 @@ def format_trial_diagnostic(report):
     """Render only known statuses; never expose raw Docker/localhost output."""
     if not isinstance(report, dict):
         return False, '診断結果を読み取れません。'
-    ready = report.get('assessment') == 'runtime_prerequisites_found_not_e2e'
     ollama = report.get('ollama')
     docker = report.get('docker')
     ollama_status = ollama.get('status') if isinstance(ollama, dict) else ''
     docker_status = docker.get('status') if isinstance(docker, dict) else ''
+    ready = (report.get('assessment') == 'runtime_prerequisites_found_not_e2e'
+             and report.get('static_assessment') == 'manual_trial_prerequisites_found'
+             and ollama_status == 'ready' and docker_status == 'ready'
+             and not report.get('blockers'))
     if ollama_status == 'ready':
         ollama_line = 'Ollama: ローカルで必要なモデルを検出'
     elif ollama_status == 'model_missing':
