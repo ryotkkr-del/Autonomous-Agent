@@ -129,5 +129,19 @@ class TrialDiagnosticGuiTests(unittest.TestCase):
             self.assertFalse(self.app._trial_running)
 
 
+    def test_inconsistent_result_never_receives_green_status(self):
+        inconsistent = {
+            "assessment": "runtime_prerequisites_found_not_e2e",
+            "static_assessment": "not_ready",
+            "ollama": {"status": "ready"},
+            "docker": {"status": "ready"},
+            "blockers": ["required_source_files_missing_or_unsafe"],
+        }
+        status, message = gui.format_trial_diagnostic(inconsistent)
+        self.assertFalse(status)
+        self.assertIn("準備に不足", message)
+
+
+
 if __name__ == "__main__":
     unittest.main()
