@@ -29,8 +29,9 @@ python -I windows_runtime_probe.py --probe-runtime --json
 
 `trial_readiness.py` は読み取り専用・オフラインの静的チェックです。`manual_trial_prerequisites_found` はファイルと基本環境を確認しただけで、安全性・Ollama接続・Docker稼働・署名を保証しません。`not_ready`なら原因を解消するまで起動しないでください。
 
-6. GUIではダミーのジョブを1件だけ、少数ステップで実行。Web検索、外部URL、Git、Codex、Pythonテストの許可を有効化しない。ファイル差分の承認も実運用データには行わない。
-7. 終了時はジョブ停止を確認してGUIを閉じ、エージェントの処理が継続していないか確認する。STOPを作った場合、再開には意図的な解除が必要。
+6. PR版のGUI下部にある **「初回診断（変更なし）」** を押すと、同じ静的・Ollama・Docker診断をGUI内から明示的に実行できる。ボタンはインストール・更新・生成コード実行をしない。結果が良好でも実機の正式運用・E2E合格は意味しない。
+7. GUIではダミーのジョブを1件だけ、少数ステップで実行。Web検索、外部URL、Git、Codex、Pythonテストの許可を有効化しない。ファイル差分の承認も実運用データには行わない。
+8. 終了時はジョブ停止を確認してGUIを閉じ、エージェントの処理が継続していないか確認する。STOPを作った場合、再開には意図的な解除が必要。
 
 Windows 11実機でGUI起動・停止・Ollama推論まで検証する具体的な手順と記録表は [WINDOWS11_E2E_GUIDE.md](WINDOWS11_E2E_GUIDE.md) を参照してください。`--probe-runtime` はローカルOllama/Dockerの状態照会だけで、アプリ起動や生成コード実行は行いません。
 
