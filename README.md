@@ -635,3 +635,33 @@ python -I safety_backup.py recover --snapshot "$env:LOCALAPPDATA\AutonomousAgent
 - SHA-256照合は偶発的な破損の検出であり、バックアップフォルダを改ざんできる相手に対する署名ではありません。
 - バックアップにはコード・ジョブの内容・個人情報や秘密が含まれ得ます。共有せず、個人用の安全な保存先に置いてください。
 - **P0-4はまだ部分達成**。実際の署名付きReleaseの配布・CI合格確認・配布物の真正性・コードの原子的切替・失敗時の自動ロールバック・Windows 11実機での総合確認は残っています。
+
+## P0-4 段階3 — 署名・CI成功・Gitオブジェクトの照合と候補の安全な準備
+
+新しい `release_candidate.py` は、独立して設定したGPG署名者のフィンガープリントに一致する署名済みGitタグを検証し、そのタグが示すコミットについて、GitHub Actionsの**3つの必須ワークフロー**が全て `main` への `push` で成功しているか確認します。
+
+必須ワークフローは `.github/workflows/tests.yml`（Windows・LinuxのPython単体テスト）、`.github/workflows/benchmark.yml`（模擬エージェント評価）、`.github/workflows/sandbox-integration.yml`（実Docker隔離テスト）です。別コミット、PRイベント、実行中、失敗した結果は認めません。CIの判定はGitHub APIに依存し、独立した暗号学的ビルド証明ではありません。
+
+署名済みReleaseタグの取得（前回の確認機能）:
+
+```powershell
+powershell -NoProfile -File .\sync.ps1 -CheckReleaseTag v3.0.0
+```
+
+**検査だけ実施**（ソースを展開しない）:
+
+```powershell
+python -I release_candidate.py --tag v3.0.0
+```
+
+**人間が指定した場合だけ候補コードを別領域に準備**（自動実行・切替はなし）:
+
+```powershell
+python -I release_candidate.py --tag v3.0.0 --stage
+```
+
+保存先はWindowsでは `%LOCALAPPDATA%\AutonomousAgent\release-candidates\candidate-...`、Linuxでは `~/.local/share/AutonomousAgent/release-candidates/candidate-...` です。`app/` は検証済みソースのコピー、`release-metadata.json` はコミット・署名者指紋・CI実行ID・ファイルSHA-256の記録です。
+
+候補はGitのタグが指すコミットからファイルオブジェクトを読み出し、オブジェクトIDを照合してから保存します。Windowsの改行変換を避けるため、`git checkout` や圧縮アーカイブの自動展開は行いません。不正パス、リンク、Windows特殊ファイル名、巨大なファイル、内容の不一致は拒否します。
+
+**重要:** 現時点のGitHubには正式なReleaseが登録されていません。信頼済み署名タグと独立した鍵の設定がなければこの機能は失敗して停止します。CLIはGitHub上の署名済みReleaseの発行、インストール、コードの切替、旧コードへのロールバック、SQLiteの復旧を行いません。`開発版を更新して起動.bat` は引き続き別の未検証main用の開発者操作であり、正式運用を意味しません。
