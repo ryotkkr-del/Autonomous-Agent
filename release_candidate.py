@@ -1,7 +1,7 @@
 """P0-4 stage 3: verify a release candidate and stage only authenticated source.
 
 Fail-closed prerequisites: independently pinned GPG signing key, signed Git tag,
-same-commit successful GitHub Actions for all three security workflows, and
+same-commit successful GitHub Actions for all required security workflows, and
 Git tree/file integrity. No branch checkout, installation, automatic update,
 code execution, database changes, or activation is performed.
 
@@ -35,6 +35,7 @@ WORKFLOWS = frozenset({
     ".github/workflows/tests.yml",
     ".github/workflows/benchmark.yml",
     ".github/workflows/sandbox-integration.yml",
+    ".github/workflows/codeql.yml",
 })
 MAX_CI_RESPONSE = 2_000_000
 MAX_FILES = 1500

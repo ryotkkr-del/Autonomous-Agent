@@ -33,7 +33,7 @@ def ci_fixture(commit=SHA):
 
 
 class CandidatePolicyTests(unittest.TestCase):
-    def test_three_successful_workflows_for_exact_commit(self):
+    def test_required_successful_workflows_for_exact_commit(self):
         info = candidate.verify_ci(SHA, ci_fixture())
         self.assertEqual(set(info), candidate.WORKFLOWS)
         self.assertEqual({x["commit"] for x in info.values()}, {SHA})

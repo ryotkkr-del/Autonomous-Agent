@@ -124,7 +124,7 @@ Remaining P0-4/P0-5 work: trusted Release distribution and CI/artifact verificat
 ## P0-4 stage 3 — signed Git source and exact-commit CI candidate verification
 
 - `release_candidate.py` refuses release staging unless a stable annotated Git tag has a valid GPG signature by an independently pinned maintainer key. The trust file is outside the checkout and is never created automatically.
-- The program fetches bounded CI status data from the fixed HTTPS GitHub API origin without environment HTTP proxies or redirects. It requires successful completed `push` runs for the exact signed commit on `main` for all three workflows: Python tests, behavioral benchmark and live Docker sandbox integration. Missing/mismatched/failed workflows block staging.
+- The program fetches bounded CI status data from the fixed HTTPS GitHub API origin without environment HTTP proxies or redirects. It requires successful completed `push` runs for the exact signed commit on `main` for every required workflow: Python tests, behavioral benchmark, live Docker sandbox integration, and CodeQL. Missing/mismatched/failed workflows block staging.
 - Optional `--stage` materializes files from the verified Git tree using `git cat-file` blobs and validates file length and Git object ID, also recording SHA-256. The file set is strictly bounded; links, Git submodules, Windows reserved names, runtime data, path traversal and case collisions are rejected. It does not use `git checkout`, apply code, execute tests from candidate, or touch user workspace/SQLite.
 - Candidate copies are placed outside the Git checkout, with a new unique folder each time. No automatic activation, background update, runtime migration or automatic rollback has been implemented.
 

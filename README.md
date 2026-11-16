@@ -638,7 +638,7 @@ python -I safety_backup.py recover --snapshot "$env:LOCALAPPDATA\AutonomousAgent
 
 ## P0-4 段階3 — 署名・CI成功・Gitオブジェクトの照合と候補の安全な準備
 
-新しい `release_candidate.py` は、独立して設定したGPG署名者のフィンガープリントに一致する署名済みGitタグを検証し、そのタグが示すコミットについて、GitHub Actionsの**3つの必須ワークフロー**が全て `main` への `push` で成功しているか確認します。
+新しい `release_candidate.py` は、独立して設定したGPG署名者のフィンガープリントに一致する署名済みGitタグを検証し、そのタグが示すコミットについて、GitHub Actionsの**4つの必須ワークフロー**（Windows/Linux単体テスト、模擬評価、Docker隔離、CodeQL）が全て `main` への `push` で成功しているか確認します。
 
 必須ワークフローは `.github/workflows/tests.yml`（Windows・LinuxのPython単体テスト）、`.github/workflows/benchmark.yml`（模擬エージェント評価）、`.github/workflows/sandbox-integration.yml`（実Docker隔離テスト）です。別コミット、PRイベント、実行中、失敗した結果は認めません。CIの判定はGitHub APIに依存し、独立した暗号学的ビルド証明ではありません。
 
