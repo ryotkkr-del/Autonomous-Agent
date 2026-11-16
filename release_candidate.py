@@ -230,40 +230,23 @@ def stage_release(repo: Path, commit: str, tag: str, signer: str,
     final = root / identity
     draft.mkdir(mode=0o700)
     try:
-        archive = draft / "candidate.zip"
-        with archive.open("xb") as handle:
-            result = _git(repo, ["archive", "--format=zip", commit], stdout=handle)
-        if result.returncode or archive.stat().st_size > MAX_ARCHIVE_BYTES:
-            raise ValueError("Git archive failed or exceeds limit")
         app = draft / "app"
         app.mkdir()
         digests = {}
-        actual = set()
-        with zipfile.ZipFile(archive) as contents:
-            for item in contents.infolist():
-                name = item.filename
-                if item.is_dir():
-                    continue
-                _tree_path(name)
-                if name not in expected or name in actual:
-                    raise ValueError("archive contains unexpected or duplicate entries")
-                blob_sha, size = expected[name]
-                if (item.file_size != size or size > MAX_FILE_BYTES or
-                        item.compress_size > MAX_ARCHIVE_BYTES):
-                    raise ValueError("archive size does not match signed Git tree")
-                # Check file content against the signed Git object's blob ID.
-                data = contents.read(item)
-                if len(data) != size or not _file_hash_matches_git(data, blob_sha):
-                    raise ValueError("release artifact differs from signed Git object")
-                dest = app.joinpath(*PurePosixPath(name).parts)
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                with dest.open("xb") as stream:
-                    stream.write(data)
-                actual.add(name)
-                digests[name] = hashlib.sha256(data).hexdigest()
-        if actual != set(expected):
-            raise ValueError("signed release archive omits files")
-        archive.unlink()
+        for name, (blob_sha, size) in sorted(expected.items()):
+            # Directly read signed Git objects, without checkout/archive
+            # conversion (e.g. Windows autocrlf or export attributes).
+            result = _git(repo, ["cat-file", "blob", blob_sha])
+            if result.returncode != 0:
+                raise ValueError("cannot retrieve signed release blob")
+            data = result.stdout
+            if len(data) != size or not _file_hash_matches_git(data, blob_sha):
+                raise ValueError("release artifact differs from signed Git object")
+            dest = app.joinpath(*PurePosixPath(name).parts)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            with dest.open("xb") as stream:
+                stream.write(data)
+            digests[name] = hashlib.sha256(data).hexdigest()
         metadata = {
             "format": "autonomous-agent-staged-release-v1",
             "source": REPOSITORY,
