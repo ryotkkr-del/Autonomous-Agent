@@ -89,3 +89,11 @@ Web調査の検索精度向上、修正成功率向上、安全な小タスク�
 新規 `trial_readiness.py` はPCへの書込、SQLite内容の読み込み、ネットワーク通信、外部CLIの実行を行わない静的診断。Python 3.11以降・Tkinter・プログラム必須ファイル・Git/Ollama/DockerコマンドのPATH、STOP/agent.lock、既存DBとworkspaceのパス種別を検査する。不足は拒否または警告を表示し、Docker実行可否やOllama接続、署名・権限・安全性までは保証しない。
 
 `FIRST_TRIAL.md` に `main` の現時点での限定試用と、Draft PR #1にある診断機構の開発用評価の手順を分けて記載。重要データを入れない、管理者権限で起動しない、Web/Git/Codex/Pythonテスト/スケジュール実行を有効にしない、短いダミージョブのみの手動試用を推奨。Windows 11実機でのGUI・Ollama・Docker統合と署名付き正式Releaseの認証は引き続き**未達**。
+
+## P0-6段階2：実機ランタイム準備診断と手動E2Eチェックリスト
+
+`windows_runtime_probe.py` はユーザーが `--probe-runtime` を**明示指定した場合だけ**、ローカル `127.0.0.1:11434/api/tags` にリダイレクトなしGETを1回送信し、必要な `gemma3:4b` の存在を判定する。最大128KiB、タイムアウト3秒、モデルのテキスト入力・推論リクエストは行わない。Dockerについては既存の `sandbox_runner.setup_diagnosis()` の読み取り専用コマンドを再利用し、ローカルLinuxエンジン・必要なPythonイメージの存在を確認。`docker pull/run/build` は呼び出さない。内部情報を出力しないカテゴリ型のJSONを表示し、ファイル保存や既存DB/GUIの変更は行わない。
+
+`tests/test_windows_runtime_probe.py` にループバック接続、モデル不足、HTTPリダイレクト拒否、過大・不正応答、秘密情報を表示しないこと、Docker異常、オプトイン強制、Python隔離起動、Windowsでない場合の判定保留等の否定試験を追加。`FIRST_TRIAL.md` と `WINDOWS11_E2E_GUIDE.md` に、診断→GUI起動→実Ollama推論→停止/履歴保持→Docker隔離否定試験を人手で確認する手順と未実施を明示した記録表を作成。
+
+**実機での検証はまだ一度も実施していない。** `runtime_prerequisites_found_not_e2e` は周辺サービスの準備確認であり、Windows 11 GUI/E2E合格、コード・Docker隔離の安全性、署名Release、更新切替・ロールバック・電源断耐性を保証しない。更新の自動適用と長時間無人運用は引き続き無効。
