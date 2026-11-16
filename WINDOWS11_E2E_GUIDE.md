@@ -32,6 +32,7 @@ python -I windows_runtime_probe.py --probe-runtime --json
 3. Web検索・URL参照・Git・Codex・テスト実行を許可せず、ダミー目標を1件作成し、少数ステップだけ開始する。計画・イベント履歴がGUIに記録されるか確認する。
 4. 停止操作を行い、処理が止まったことをGUIとCLIの両方で確認する。GUIを閉じた後も子プロセスが残る可能性があるため終了を目視確認する。
 5. GUIを再起動し、同じジョブと履歴が残っていることを確認する。ただし、STOPが残っている場合は意図的に解除するまで実行されない。
+6. **GUIを閉じる際の保護:** ダミータスクを実行中にウィンドウの×を押し、終了確認ダイアログが表示されることを確認する。キャンセルした場合はSTOPが勝手に作られないこと、終了に同意した場合はSTOP作成後も子プロセスの終了前にウィンドウが消えないこと、子プロセス終了後にGUIが閉じることを確認する。STOPは処理ステップ境界で確認するため、現在の操作完了まで時間がかかる場合がある。**強制終了は行わない**。
 
 ## 3. Docker隔離の実測（未自動実施）
 
@@ -49,6 +50,7 @@ Docker診断成功は`docker run`で実際に生成Pythonテストを隔離で�
 | GUI表示・終了 | pass / fail / not-run |
 | ダミー目標と実モデルの出力 | pass / fail / not-run |
 | 停止・再開 | pass / fail / not-run |
+| 実行中にGUIを閉じた場合の子プロセス待機 | pass / fail / not-run |
 | SQLiteと履歴の保持 | pass / fail / not-run |
 | Docker隔離否定試験 | pass / fail / not-run |
 | 安全なRelease更新と復旧 | **not-implemented** |
