@@ -1,4 +1,5 @@
 """Windows/Linux isolated fault-injection regression tests; no real updater."""
+from contextlib import closing
 import sqlite3
 import unittest
 
@@ -15,7 +16,7 @@ class SwitchTrialTests(unittest.TestCase):
     def assert_data_unchanged(self):
         self.assertEqual((self.trial.data / "state.sqlite3").read_bytes(), self.original_db)
         self.assertEqual((self.trial.data / "workspace" / "note.txt").read_bytes(), self.original_note)
-        with sqlite3.connect(self.trial.data / "state.sqlite3") as db:
+        with closing(sqlite3.connect(self.trial.data / "state.sqlite3")) as db:
             self.assertEqual(db.execute("SELECT value FROM progress").fetchone()[0], "keep me")
 
     def test_successful_pointer_switch_preserves_old_and_data(self):
@@ -34,7 +35,7 @@ class SwitchTrialTests(unittest.TestCase):
                 self.assertEqual(trial.recover(), "old")
                 self.assertFalse((trial.root / "transaction.json").exists())
                 self.assertTrue((trial.root / "versions" / "new" / "agent.py").exists())
-                with sqlite3.connect(trial.data / "state.sqlite3") as db:
+                with closing(sqlite3.connect(trial.data / "state.sqlite3")) as db:
                     self.assertEqual(db.execute("SELECT value FROM progress").fetchone()[0], "keep me")
 
     def test_mutated_new_code_blocks_switch(self):
