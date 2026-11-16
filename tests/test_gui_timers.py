@@ -13,6 +13,9 @@ class FakeRoot:
     def after(self, delay, callback):
         self.scheduled.append((delay, callback))
 
+    def protocol(self, name, callback):
+        self.close_protocol = (name, callback)
+
 
 class GuiTimerTests(unittest.TestCase):
     def test_initialization_schedules_exactly_one_poll_and_one_refresh(self):
@@ -29,6 +32,7 @@ class GuiTimerTests(unittest.TestCase):
         self.assertEqual(len(root.scheduled), 2)
         self.assertEqual([delay for delay, _ in root.scheduled], [350, 2000])
         self.assertEqual(root.scheduled[0][1], app._poll)
+        self.assertEqual(root.close_protocol, ('WM_DELETE_WINDOW', app.request_close))
         self.assertEqual(root.scheduled[1][1], app._refresh_periodic)
 
     def test_frequent_polling_does_not_spawn_new_refresh_loops(self):
