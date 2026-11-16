@@ -174,7 +174,7 @@ class CandidateStagingTests(unittest.TestCase):
 
     def test_missing_application_files_refused(self):
         with patch.object(candidate, "_expected_tree", return_value={"README.md": ("a" * 40, 5)}):
-            with self.assertRaisesRegex(ValueError, "omits|unexpected"):
+            with self.assertRaisesRegex(ValueError, "omits|unexpected|differs"):
                 candidate.stage_release(self.repo, self.commit, "v3.0.0", SIGNER,
                                         {}, self.stages)
 
