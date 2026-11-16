@@ -96,9 +96,11 @@ def verify_ci(commit: str, response: dict) -> dict[str, dict]:
         if not isinstance(path, str):
             continue
         workflow = path.split("@", 1)[0]
-        if not workflow.startswith(REPOSITORY + "/"):
-            continue
-        workflow = workflow[len(REPOSITORY) + 1:]
+        # GitHub Actions API currently returns ".github/workflows/name.yml";
+        # some responses include a full repository prefix. Never match by
+        # suffix only, or another repository can masquerade as a workflow.
+        if workflow.startswith(REPOSITORY + "/"):
+            workflow = workflow[len(REPOSITORY) + 1:]
         if workflow not in WORKFLOWS:
             continue
         if (run.get("head_sha") != commit or run.get("head_branch") != "main"
