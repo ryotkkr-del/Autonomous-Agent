@@ -12,7 +12,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-from contextlib import closing
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -23,13 +22,12 @@ import shutil
 import stat
 import subprocess
 import sys
-import tempfile
 import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
-import zipfile
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import release_policy
 
 REPOSITORY = release_policy.REPOSITORY
@@ -42,7 +40,6 @@ MAX_CI_RESPONSE = 2_000_000
 MAX_FILES = 1500
 MAX_TREE_BYTES = 50_000_000
 MAX_FILE_BYTES = 5_000_000
-MAX_ARCHIVE_BYTES = 25_000_000
 MAX_PATH_LENGTH = 220
 WINDOWS_RESERVED = {"CON", "PRN", "AUX", "NUL"} | {
     f"{p}{n}" for p in ("COM", "LPT") for n in range(1, 10)
@@ -223,6 +220,13 @@ def stage_release(repo: Path, commit: str, tag: str, signer: str,
                   ci: dict[str, dict], stage_root: Path) -> Path:
     """Create a new code-only candidate, never touching active app or data."""
     repo = Path(repo).resolve(strict=True)
+    if (release_policy.SHA.fullmatch(commit) is None or
+            release_policy.VERSION_TAG.fullmatch(tag) is None or
+            release_policy.FINGERPRINT.fullmatch(signer) is None or
+            set(ci) != WORKFLOWS or any(
+                entry.get("commit") != commit or entry.get("conclusion") != "success"
+                for entry in ci.values())):
+        raise ValueError("signed release and complete CI evidence required for staging")
     expected = _expected_tree(repo, commit)
     root = _private_stage_root(Path(stage_root), repo)
     identity = "candidate-" + tag + "-" + commit[:12] + "-" + uuid.uuid4().hex[:8]
@@ -289,8 +293,7 @@ def main(argv=None) -> int:
                               "status": "check_only_no_activation"}, indent=2))
             print("CHECK ONLY: no candidate was installed or activated.")
     except (OSError, ValueError, RuntimeError, json.JSONDecodeError,
-            subprocess.TimeoutExpired, zipfile.BadZipFile,
-            urllib.error.URLError) as exc:
+            subprocess.TimeoutExpired, urllib.error.URLError) as exc:
         print("RELEASE REFUSED:", str(exc)[:350], file=sys.stderr)
         return 2
     return 0
