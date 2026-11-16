@@ -16,6 +16,7 @@ import subprocess
 import sys
 import urllib.error
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import release_candidate as candidate
 import release_policy
 
