@@ -228,6 +228,8 @@ def stage_release(repo: Path, commit: str, tag: str, signer: str,
                 for entry in ci.values())):
         raise ValueError("signed release and complete CI evidence required for staging")
     expected = _expected_tree(repo, commit)
+    if not {'agent.py', 'gui.py'}.issubset(expected):
+        raise ValueError('signed release omits essential application files')
     root = _private_stage_root(Path(stage_root), repo)
     identity = "candidate-" + tag + "-" + commit[:12] + "-" + uuid.uuid4().hex[:8]
     draft = root / (".partial-" + identity)
