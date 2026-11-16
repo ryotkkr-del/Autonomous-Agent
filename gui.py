@@ -14,6 +14,7 @@ import tempfile
 import threading
 import queue
 import json
+import stat
 import webbrowser
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
@@ -22,6 +23,24 @@ ROOT = Path(__file__).resolve().parent
 DB = ROOT / 'state.sqlite3'
 STOP = ROOT / 'STOP'
 MAX_GOAL = 2000
+
+
+def request_stop_marker(path=STOP):
+    """Create only an empty STOP marker; never follow or touch an existing link."""
+    path = Path(path)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    try:
+        fd = os.open(path, flags, 0o600)
+    except FileExistsError:
+        st = path.lstat()
+        if (not stat.S_ISREG(st.st_mode) or st.st_nlink != 1 or
+                getattr(st, "st_file_attributes", 0) &
+                getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)):
+            raise ValueError("STOP marker must be an ordinary, non-linked file")
+    else:
+        os.close(fd)
+
+
 
 
 def format_trial_diagnostic(report):
@@ -205,11 +224,14 @@ class DesktopApp:
         self.last_action_label = tk.StringVar(value='')
         self._trial_queue = queue.Queue(maxsize=1)
         self._trial_running = False
+        self._closing = False
+        self._closed = False
         self.tests_enabled = tk.BooleanVar(value=False)
         self.git_enabled = tk.BooleanVar(value=False)
         self.search_enabled = tk.BooleanVar(value=False)
         self._build()
         self.refresh()
+        root.protocol('WM_DELETE_WINDOW', self.request_close)
         root.after(350, self._poll)
         root.after(2000, self._refresh_periodic)
 
@@ -302,6 +324,8 @@ class DesktopApp:
         ttk.Label(evalrow,text='テスト専用環境で実行・生成コードは実行しません').pack(side='left')
 
     def _refresh_periodic(self):
+        if self._closed:
+            return
         # External scheduled runs can update SQLite independently of this GUI.
         if self.worker is None and self.output_file is None:
             self.refresh()
@@ -384,6 +408,9 @@ class DesktopApp:
         return self.selected_id
 
     def launch(self,args,title, on_success=None):
+        if self._closing:
+            messagebox.showinfo('終了処理中', 'エージェントの停止完了を待っています。')
+            return False
         if self.proc is not None and self.proc.poll() is None:
             messagebox.showinfo('実行中','実行中の処理が終わるまで操作できません')
             return False
@@ -409,18 +436,21 @@ class DesktopApp:
         return True
 
     def _poll(self):
+        if self._closed:
+            return
         try:
             diagnostic = self._trial_queue.get_nowait()
         except queue.Empty:
             pass
         else:
             self._trial_running = False
-            self.status_label.set('初回診断が終了しました')
-            is_ready, message = format_trial_diagnostic(diagnostic)
-            if is_ready:
-                messagebox.showinfo('初回診断（正式運用未達）', message)
-            else:
-                messagebox.showwarning('初回診断（準備を確認）', message)
+            if not self._closing:
+                self.status_label.set('初回診断が終了しました')
+                is_ready, message = format_trial_diagnostic(diagnostic)
+                if is_ready:
+                    messagebox.showinfo('初回診断（正式運用未達）', message)
+                else:
+                    messagebox.showwarning('初回診断（準備を確認）', message)
         if self.output_file is not None:
             try:
                 with self.output_file.open('r',encoding='utf-8',errors='replace') as fp:
@@ -436,7 +466,7 @@ class DesktopApp:
                 if getattr(self,'_finish_pending',False):
                     code=self.proc.returncode if self.proc else -1
                     self.status_label.set('完了' if code==0 else f'エラー (終了コード {code})')
-                    on_success=self._on_success if code==0 else None
+                    on_success=self._on_success if code==0 and not self._closing else None
                     if on_success:
                         try:on_success(self.last_output)
                         except Exception as exc:messagebox.showerror('処理後のエラー',str(exc))
@@ -445,10 +475,55 @@ class DesktopApp:
                     try:self.output_file.unlink(missing_ok=True)
                     except OSError:pass
                     self.output_file=None
-                    self.refresh()
+                    if not self._closing:
+                        self.refresh()
                 else:self._finish_pending=True
             else:self._finish_pending=False
+        if self._closing and self._ready_to_close():
+            self._finish_close()
+            return
         self.root.after(350,self._poll)
+
+    def _ready_to_close(self):
+        """A GUI close cannot leave its own agent subprocess running."""
+        if self.worker is not None:
+            return False
+        return self.proc is None or self.proc.poll() is not None
+
+    def _finish_close(self):
+        if self._closed or not self._ready_to_close():
+            return
+        self._closed = True
+        self.root.destroy()
+
+    def request_close(self):
+        """Ask the user, create STOP, and wait without blocking Tk or killing jobs."""
+        if self._closed:
+            return
+        if self._closing:
+            messagebox.showinfo(
+                '停止待機中',
+                '現在の操作の終了を待っています。GUIを閉じても安全な状態になるまで待機します。')
+            return
+        if self._ready_to_close():
+            self._finish_close()
+            return
+        if not messagebox.askyesno(
+                '作業中の終了',
+                'エージェントの処理が進行中です。\n'
+                '停止要求を送信し、処理が実際に終了するまで待ってからGUIを閉じますか？\n'
+                '実行中の操作が完了するまでは待機します。強制終了はしません。'):
+            return
+        try:
+            request_stop_marker()
+        except (OSError, ValueError):
+            messagebox.showwarning(
+                '停止できません',
+                'STOPの安全な作成に失敗しました。実行を放置せず状態を確認してください。')
+            return
+        self._closing = True
+        self.status_label.set('停止要求中：実行中の操作の終了を待っています')
+        self._append('GUIの終了要求: STOPを送信しました。子プロセス終了を待機します。\n')
 
     def create_goal(self):
         try:goal=validate_goal(self.goal.get())
@@ -461,6 +536,9 @@ class DesktopApp:
         self.refresh(selected=number)
 
     def run_job(self):
+        if self._closing:
+            messagebox.showinfo('終了処理中', '停止完了まで新しい作業を開始できません。')
+            return
         job_id=self._current_job()
         if job_id is None:return
         job=self.jobs[str(job_id)]
@@ -482,7 +560,11 @@ class DesktopApp:
 
     def pause(self):
         # STOP is checked between actions. Does not forcibly terminate an action.
-        STOP.touch()
+        try:
+            request_stop_marker()
+        except (OSError, ValueError):
+            messagebox.showwarning('停止に失敗', 'STOPを安全に作成できません。作業を継続しないで状態を確認してください。')
+            return
         self.status_label.set('停止を要求しました（現在の操作が終わってから停止）')
         self._append('停止要求を送信しました。\n')
 
