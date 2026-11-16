@@ -108,15 +108,15 @@ def _check_sqlite(root: Path) -> dict:
             check = conn.execute("PRAGMA integrity_check").fetchone()
             if not check or check[0] != "ok":
                 return {"status": "needs_manual_review", "reason": "sqlite_integrity_failed"}
-            count = None
             table = conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='jobs'"
             ).fetchone()
-            if table is not None:
-                # Only counts are returned: never display task content.
-                count = int(conn.execute(
-                    "SELECT COUNT(*) FROM jobs WHERE status='running'"
-                ).fetchone()[0])
+            if table is None:
+                return {"status": "needs_manual_review", "reason": "jobs_table_missing"}
+            # Only counts are returned: never display task content.
+            count = int(conn.execute(
+                "SELECT COUNT(*) FROM jobs WHERE status='running'"
+            ).fetchone()[0])
         if any(os.path.lexists(str(db) + suffix) for suffix in AUX_SUFFIXES):
             return {"status": "needs_manual_review", "reason": "sqlite_auxiliary_files_appeared"}
         if count is not None and count:
