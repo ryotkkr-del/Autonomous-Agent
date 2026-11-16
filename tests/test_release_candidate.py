@@ -159,24 +159,36 @@ class CandidateStagingTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertFalse(self.stages.exists())
 
+    def test_staging_without_complete_ci_evidence_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "complete CI"):
+            candidate.stage_release(self.repo, self.commit, "v3.0.0", SIGNER,
+                                    {}, self.stages)
+        self.assertFalse(self.stages.exists())
+
+    def test_isolated_python_launch_parses_command_line(self):
+        script = Path(__file__).resolve().parents[1] / "release_candidate.py"
+        result = subprocess.run([os.sys.executable, "-I", str(script), "--help"],
+                                capture_output=True, text=True, errors="replace", timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--stage", result.stdout)
     def test_stage_inside_app_is_refused(self):
         with self.assertRaisesRegex(ValueError, "outside"):
             candidate.stage_release(self.repo, self.commit, "v3.0.0", SIGNER,
-                                    {}, self.repo / "staging")
+                                    candidate.verify_ci(self.commit, ci_fixture(self.commit)), self.repo / "staging")
         self.assertFalse((self.repo / "staging").exists())
 
     def test_corrupted_artifact_refused_and_partials_removed(self):
         with patch.object(candidate, "_file_hash_matches_git", return_value=False):
             with self.assertRaisesRegex(ValueError, "differs"):
                 candidate.stage_release(self.repo, self.commit, "v3.0.0", SIGNER,
-                                        {}, self.stages)
+                                        candidate.verify_ci(self.commit, ci_fixture(self.commit)), self.stages)
         self.assertEqual(list(self.stages.iterdir()), [])
 
     def test_missing_application_files_refused(self):
         with patch.object(candidate, "_expected_tree", return_value={"README.md": ("a" * 40, 5)}):
             with self.assertRaisesRegex(ValueError, "omits|unexpected|differs"):
                 candidate.stage_release(self.repo, self.commit, "v3.0.0", SIGNER,
-                                        {}, self.stages)
+                                        candidate.verify_ci(self.commit, ci_fixture(self.commit)), self.stages)
 
 
 if __name__ == "__main__":
