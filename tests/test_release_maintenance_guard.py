@@ -25,7 +25,9 @@ class MaintenanceGuardTests(unittest.TestCase):
         with guard.hold_stop_lock(self.root) as result:
             self.assertEqual(result["status"], "held_test_only")
             self.assertFalse(result["application_changes"])
-            self.assertEqual((self.root / "agent.lock").read_bytes(), before)
+            # Windows byte-range locks also block reads from another handle.
+            # Verify metadata while held and compare bytes only after unlock.
+            self.assertEqual((self.root / "agent.lock").stat().st_size, len(before))
         self.assertEqual((self.root / "agent.lock").read_bytes(), before)
         self.assertEqual((self.root / "STOP").read_bytes(), b"")
         self.assertEqual((self.root / "state.sqlite3").read_bytes(),
