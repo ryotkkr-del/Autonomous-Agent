@@ -25,6 +25,8 @@ class TrialDiagnosticGuiTests(unittest.TestCase):
         self.app = object.__new__(gui.DesktopApp)
         self.app._trial_queue = queue.Queue(maxsize=1)
         self.app._trial_running = False
+        self.app._closing = False
+        self.app._closed = False
         self.app.status_label = Label()
         self.app.root = Root()
         self.app.output_file = None
