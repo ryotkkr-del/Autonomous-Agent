@@ -1595,12 +1595,12 @@ def codex_job(job_id,confirm=False):
               print('Codex timed out. Verify workspace before continuing.')
 
 def tick(model=MODEL,steps=8):
-    """Single bounded scheduled pass: resume one paused job, no infinite worker."""
+    """Scheduled pass only for paused jobs; never auto-retry crash-stale running jobs."""
     if (ROOT/'STOP').exists():
         print('Global STOP is present; skipping scheduled run');return
     with connection() as db:
         r=db.execute("""SELECT j.id FROM jobs j LEFT JOIN job_controls c ON c.job_id=j.id
-            WHERE j.status IN ('paused','running') AND j.steps<?
+            WHERE j.status='paused' AND j.steps<?
             AND (c.retry_after IS NULL OR c.retry_after='' OR c.retry_after<=?)
             ORDER BY j.updated ASC,j.id ASC LIMIT 1""",(MAX_JOB_STEPS,now())).fetchone()
     if r is None:print('No pending jobs');return
