@@ -61,6 +61,16 @@ class RecoveryAuditTests(unittest.TestCase):
         self.assertEqual(report["active"]["sqlite"]["running_job_count"], 1)
         self.assertEqual(self.db.read_bytes(), before)
 
+    def test_unrelated_valid_sqlite_database_is_not_accepted(self):
+        with closing(sqlite3.connect(self.db)) as conn:
+            conn.execute("CREATE TABLE unrelated (id INTEGER)")
+            conn.commit()
+        before = self.db.read_bytes()
+        report = self.invoke()
+        self.assertEqual(report["assessment"], "needs_manual_review")
+        self.assertEqual(report["active"]["sqlite"]["reason"], "jobs_table_missing")
+        self.assertEqual(self.db.read_bytes(), before)
+
     def test_corrupt_database_rejected_without_creating_other_files(self):
         self.db.write_bytes(b"NOT A SQLITE DATABASE" * 8)
         result = self.invoke()
