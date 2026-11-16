@@ -53,7 +53,8 @@ class SetupTests(unittest.TestCase):
              patch.object(sandbox.subprocess,"run",return_value=SimpleNamespace(returncode=0,stdout="ok",stderr="")) as run:
             result=sandbox.prepare_image(confirmed=True)
         self.assertIn("Docker image ready",result)
-        self.assertEqual(run.call_args.args[0],["docker","pull","python:3.11-slim"])
+        self.assertEqual(run.call_args.args[0],["docker","pull",sandbox.IMAGE])
+        self.assertIn('@sha256:', sandbox.IMAGE)
         self.assertLessEqual(run.call_args.kwargs["timeout"],300)
 
     def test_gui_buttons_and_callbacks_exist(self):

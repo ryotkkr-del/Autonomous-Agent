@@ -2,7 +2,8 @@
 
 This is a stronger containment boundary than a Python subprocess, not a proof
 of perfect isolation. Requires Docker Desktop in Linux-container mode (Windows)
-or Docker Engine (Linux), and the pre-pulled official python:3.11-slim image.
+or Docker Engine (Linux), and the pre-pulled official Python image pinned by
+immutable manifest digest.
 No Docker daemon access, host credentials or writable host files are mounted
 into the test container.
 """
@@ -15,7 +16,10 @@ import shutil
 import subprocess
 import tempfile
 
-IMAGE = "python:3.11-slim"
+# Docker Hub's ``3.11-slim`` tag is mutable.  This multi-platform manifest
+# digest was independently resolved from the official library/python registry
+# on 2026-11-16; update it deliberately with review and a sandbox CI run.
+IMAGE = "python:3.11-slim@sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535"
 CONTAINER_TIMEOUT = 45
 MAX_OUTPUT = 12000
 CONTAINER_PREFIX = "autonomous-agent-test-"

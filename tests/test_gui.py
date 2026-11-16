@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from gui import validate_goal, extract_job_id, load_jobs, job_folder
+from gui import validate_goal, extract_job_id, load_jobs, job_folder, readonly_database_uri
 
 class DesktopHelpersTest(unittest.TestCase):
     def test_goal_validation(self):
@@ -31,6 +31,18 @@ class DesktopHelpersTest(unittest.TestCase):
             rows=load_jobs(file)
             self.assertEqual(rows[0]['goal'],'目標')
             self.assertEqual(len(rows),1)
+
+    def test_readonly_uri_escapes_windows_uri_characters(self):
+        with tempfile.TemporaryDirectory(prefix='agent#readonly-') as d:
+            file = Path(d) / 'state.sqlite3'
+            db = sqlite3.connect(file)
+            db.execute('CREATE TABLE jobs (id INTEGER, goal TEXT, status TEXT, steps INTEGER, result TEXT, allow_tests INTEGER, allow_git INTEGER, workspace_rel TEXT, updated TEXT)')
+            db.commit()
+            db.close()
+            uri = readonly_database_uri(file)
+            self.assertIn('%23', uri)
+            self.assertTrue(uri.endswith('?mode=ro'))
+            self.assertEqual(load_jobs(file), [])
 
     def test_job_folder_prevents_traversal(self):
         with tempfile.TemporaryDirectory() as d:

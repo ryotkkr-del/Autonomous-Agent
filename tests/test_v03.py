@@ -43,7 +43,7 @@ class UpgradeTests(unittest.TestCase):
     def test_chat_report_has_goal_and_does_not_call_remote(self):
         j=agent.make_job('make a note')
         agent.chat_report(j)
-        body=(self.root/f'chat-report-{j}.md').read_text()
+        body=(self.root/f'chat-report-{j}.md').read_text(encoding='utf-8')
         self.assertIn('make a note',body)
         self.assertIn('ChatGPT',body)
 

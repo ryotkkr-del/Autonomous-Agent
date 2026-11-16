@@ -23,11 +23,22 @@ STOP = ROOT / 'STOP'
 MAX_GOAL = 2000
 
 
+def readonly_database_uri(db_path):
+    """Build an escaped SQLite read-only URI from a local filesystem path.
+
+    ``Path.as_uri`` percent-encodes URI characters such as ``#`` and ``?``.
+    Constructing ``file:`` URIs from a raw Windows path silently treats those
+    characters as a fragment/query, which can make an otherwise valid state
+    database appear missing.
+    """
+    return Path(db_path).resolve().as_uri() + '?mode=ro'
+
+
 def load_jobs(db_path=DB):
     """Read existing state without constructing/altering DB schema."""
     if not Path(db_path).is_file():
         return []
-    db = sqlite3.connect(f'file:{Path(db_path).resolve().as_posix()}?mode=ro', uri=True, timeout=3)
+    db = sqlite3.connect(readonly_database_uri(db_path), uri=True, timeout=3)
     db.row_factory = sqlite3.Row
     try:
         return [dict(row) for row in db.execute(
@@ -111,7 +122,7 @@ def read_job_details(job_id, db_path=DB):
     result = {'last_action':'', 'task_total':0, 'task_done':0}
     if not Path(db_path).is_file():
         return result
-    db = sqlite3.connect(f'file:{Path(db_path).resolve().as_posix()}?mode=ro', uri=True, timeout=3)
+    db = sqlite3.connect(readonly_database_uri(db_path), uri=True, timeout=3)
     try:
         row = db.execute('SELECT action FROM events WHERE job_id=? ORDER BY id DESC LIMIT 1',(job_id,)).fetchone()
         if row:

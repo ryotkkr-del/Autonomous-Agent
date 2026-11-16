@@ -380,7 +380,7 @@ python agent.py run 1 --steps 8
 ### Windowsでの初回準備
 
 1. Docker Desktopを公式サイト（https://www.docker.com/products/docker-desktop/）からインストール。Linux containers / WSL 2バックエンドを利用し、起動する（Windowsのエディション・仮想化設定・RAMに応じて制約があります）。
-2. PowerShellで一度だけ `docker pull python:3.11-slim` を実行。自動的にはイメージをダウンロードしません。
+2. PowerShellで一度だけ `docker pull python:3.11-slim@sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535` を実行。自動的にはイメージをダウンロードしません。
 3. `python agent.py safety JOB_ID` から `sandbox.available` を確認。
 4. GUIの「Pythonテスト実行を許可（注意）」、または `python agent.py allow-tests JOB_ID` でジョブごとの許可をオンにする。
 
@@ -401,7 +401,7 @@ GUIに「**Docker環境を診断**」「**Pythonイメージを準備**」「**D
 診断とダウンロードはバックグラウンドの子プロセスで実行するため、Tkinterの操作スレッドを塞ぎません。
 
 - **Docker環境を診断**：Docker CLI、Docker Desktop/Engine、コンテナモード、ローカル接続、必要なPythonイメージを調べ、次に必要な操作を日本語で案内します。診断だけではインストール・ダウンロード・設定変更を行いません。
-- **Pythonイメージを準備**：ユーザーの確認後に限り、Docker Hubから固定の公式イメージ `python:3.11-slim` をダウンロードして確認します。Dockerのインストールや起動、Windows/WSLの設定変更は自動実行しません。
+- **Pythonイメージを準備**：ユーザーの確認後に限り、Docker Hubから固定の公式イメージ `python:3.11-slim@sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535` をダウンロードして確認します。Dockerのインストールや起動、Windows/WSLの設定変更は自動実行しません。
 - **Docker公式サイト**：公式ダウンロードページを既定ブラウザで開きます。
 
 ### ターミナルでの同等操作

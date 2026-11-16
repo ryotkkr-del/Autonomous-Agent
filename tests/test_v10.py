@@ -39,5 +39,8 @@ class UsabilityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d); (root/'normal.txt').write_text('hi')
             (root/'sub').mkdir(); (root/'sub'/'child.py').write_text('pass')
-            (root/'link').symlink_to(root/'normal.txt')
+            try:
+                (root/'link').symlink_to(root/'normal.txt')
+            except OSError:
+                self.skipTest('symlink creation is unavailable for this Windows user')
             self.assertEqual(count_outputs(root),2)

@@ -88,7 +88,7 @@ class DiagnosisTests(unittest.TestCase):
                                             "--markdown",str(md)]),0)
             self.assertEqual(json.loads(source.read_text()),original)
             self.assertEqual(json.loads(out.read_text())["mode"],"real_ollama_diagnosis")
-            self.assertIn("改善",md.read_text())
+            self.assertIn("改善",md.read_text(encoding='utf-8'))
             self.assertEqual(set(p.name for p in (root/"analysis").iterdir()),
                              {"diagnosis.json","diagnosis.md"})
 
