@@ -29,14 +29,23 @@ def request_stop_marker(path=STOP):
     """Create only an empty STOP marker; never follow or touch an existing link."""
     path = Path(path)
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
-    try:
-        fd = os.open(path, flags, 0o600)
-    except FileExistsError:
+    def verify_existing():
         st = path.lstat()
         if (not stat.S_ISREG(st.st_mode) or st.st_nlink != 1 or
                 getattr(st, "st_file_attributes", 0) &
                 getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)):
             raise ValueError("STOP marker must be an ordinary, non-linked file")
+
+    # Windows returns PermissionError rather than FileExistsError when the
+    # destination is a directory. Check pre-existing paths before O_EXCL.
+    # The exclusive creation still prevents writing through a raced-in link.
+    if os.path.lexists(path):
+        verify_existing()
+        return
+    try:
+        fd = os.open(path, flags, 0o600)
+    except FileExistsError:
+        verify_existing()
     else:
         os.close(fd)
 
