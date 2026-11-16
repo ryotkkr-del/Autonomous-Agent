@@ -157,5 +157,15 @@ class ReleasePreflightTests(unittest.TestCase):
             self.check()
 
 
+    def test_isolated_cli_mode_can_show_help(self):
+        script = Path(__file__).resolve().parents[1] / "release_preflight.py"
+        result = subprocess.run(
+            [os.sys.executable, "-I", str(script), "--help"],
+            capture_output=True, text=True, errors="replace", timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--candidate", result.stdout)
+
+
+
 if __name__ == "__main__":
     unittest.main()
