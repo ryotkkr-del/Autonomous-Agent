@@ -9,6 +9,7 @@ models same-directory replacement; power-loss durability remains unproven.
 """
 from __future__ import annotations
 
+from contextlib import closing
 import hashlib
 import json
 import os
@@ -59,9 +60,10 @@ class Trial:
             (directory / "checksums.json").write_text(
                 json.dumps(manifest, sort_keys=True), encoding="utf-8")
         self.data.mkdir()
-        with sqlite3.connect(self.data / "state.sqlite3") as db:
-            db.execute("CREATE TABLE progress (value TEXT NOT NULL)")
-            db.execute("INSERT INTO progress VALUES ('keep me')")
+        with closing(sqlite3.connect(self.data / "state.sqlite3")) as db:
+            with db:
+                db.execute("CREATE TABLE progress (value TEXT NOT NULL)")
+                db.execute("INSERT INTO progress VALUES ('keep me')")
         (self.data / "workspace").mkdir()
         (self.data / "workspace" / "note.txt").write_text("unchanged", encoding="utf-8")
         self._atomic_json("current.json", {"generation": "old"})
