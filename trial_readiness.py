@@ -24,7 +24,7 @@ REQUIRED = (
 MAX_SOURCE_FILE = 20_000_000
 
 
-def _kind(path: Path) -> str:
+def _kind(path: Path, *, max_file_bytes: int | None = None) -> str:
     """Classify without following a link, including Windows reparse points."""
     try:
         info = path.lstat()
@@ -39,7 +39,7 @@ def _kind(path: Path) -> str:
     if stat.S_ISREG(info.st_mode):
         if info.st_nlink > 1:
             return "hardlink"
-        if info.st_size > MAX_SOURCE_FILE:
+        if max_file_bytes is not None and info.st_size > max_file_bytes:
             return "oversized"
         return "file"
     if stat.S_ISDIR(info.st_mode):
@@ -64,7 +64,7 @@ def assess(root: Path = APP_DIR, *, commands=None, tk_available=None,
     warnings: list[str] = []
     facts: dict[str, object] = {}
 
-    if _kind(root) != "directory":
+    if any(_kind(part) != "directory" for part in (root, *root.parents)):
         blockers.append("application_root_missing_or_unsafe")
         # Do not probe through a symlink/junction or an invalid directory.
         return {
@@ -87,7 +87,7 @@ def assess(root: Path = APP_DIR, *, commands=None, tk_available=None,
 
     bad_sources = []
     for name in REQUIRED:
-        kind = _kind(root / name)
+        kind = _kind(root / name, max_file_bytes=MAX_SOURCE_FILE)
         if kind != "file":
             bad_sources.append(name)
     facts["required_source_files_present_as_regular_files"] = not bad_sources
