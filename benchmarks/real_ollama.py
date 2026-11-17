@@ -289,30 +289,30 @@ def aggregate(results):
     }
 
 
-def benchmark(model, selected, steps, trials=1, decision_instruction=''):
-    report = []
-    for name in selected:
-        for trial in range(1, trials + 1):
-            print(f"Running real Ollama scenario={name} trial={trial}/{trials}", flush=True)
-            outcome = run_case(name, model, steps, decision_instruction=decision_instruction)
-            outcome["trial"] = trial
-            report.append(outcome)
-            print(f"  {'PASS' if outcome['passed'] else 'FAIL'} "
-                  f"steps={outcome['steps']} elapsed={outcome['elapsed_seconds']}s "
-                  f"reason={outcome['failure_category']}", flush=True)
+def _report_document(model, selected, steps, trials, results, *, model_info=None,
+                     decision_instruction='', complete=False):
+    """Build a self-contained report that is valid even while still running."""
+    expected = len(selected) * trials
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "mode": "real_ollama",
         "created_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "model": model,
+        "model_info": model_info or {},
         "experiment": {
             "decision_instruction_sha256": (hashlib.sha256(decision_instruction.encode('utf-8')).hexdigest()
                                             if decision_instruction else None),
             "decision_instruction_bytes": len(decision_instruction.encode('utf-8')),
             "scope": "decision_only",
         },
+        "scenarios": list(selected),
         "step_budget": steps,
         "trials": trials,
+        "progress": {
+            "completed_trials": len(results),
+            "expected_trials": expected,
+            "complete": bool(complete),
+        },
         "no_auto_approval": True,
         "generated_code_executed": False,
         "limitations": [
@@ -321,9 +321,80 @@ def benchmark(model, selected, steps, trials=1, decision_instruction=''):
             "Different model inference seeds and device performance may change results.",
             "No execution occurs inside Docker for this benchmark; AI-generated code is never executed.",
         ],
-        "summary": aggregate(report),
-        "results": report,
+        "summary": aggregate(results),
+        "results": results,
     }
+
+
+def _atomic_write_report(path, report):
+    """Persist a complete JSON document without leaving a half-written report."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    encoded = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
+    fd, temporary = tempfile.mkstemp(prefix=".real-ollama-", suffix=".json", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    except Exception:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def _resume_results(document, model, selected, steps, trials):
+    """Accept only a compatible, non-duplicated checkpoint as resume input."""
+    if (not isinstance(document, dict) or document.get("schema_version") != 2
+            or document.get("mode") != "real_ollama"
+            or document.get("model") != model
+            or document.get("scenarios") != list(selected)
+            or document.get("step_budget") != steps
+            or document.get("trials") != trials
+            or document.get("generated_code_executed") is not False
+            or not isinstance(document.get("results"), list)):
+        raise ValueError("resume report is incompatible with the requested benchmark")
+    seen = set()
+    results = []
+    for item in document["results"]:
+        if (not isinstance(item, dict) or item.get("model") != model
+                or item.get("scenario") not in selected
+                or not isinstance(item.get("trial"), int)
+                or not 1 <= item["trial"] <= trials):
+            raise ValueError("resume report contains an invalid trial")
+        key = item["scenario"], item["trial"]
+        if key in seen:
+            raise ValueError("resume report contains duplicate trials")
+        seen.add(key)
+        results.append(item)
+    return results
+
+
+def benchmark(model, selected, steps, trials=1, decision_instruction='', *,
+              results=None, model_info=None, checkpoint=None):
+    report = list(results or [])
+    completed = {(item["scenario"], item["trial"]) for item in report}
+    for name in selected:
+        for trial in range(1, trials + 1):
+            if (name, trial) in completed:
+                continue
+            print(f"Running real Ollama scenario={name} trial={trial}/{trials}", flush=True)
+            outcome = run_case(name, model, steps, decision_instruction=decision_instruction)
+            outcome["trial"] = trial
+            report.append(outcome)
+            completed.add((name, trial))
+            print(f"  {'PASS' if outcome['passed'] else 'FAIL'} "
+                  f"steps={outcome['steps']} elapsed={outcome['elapsed_seconds']}s "
+                  f"reason={outcome['failure_category']}", flush=True)
+            if checkpoint:
+                checkpoint(_report_document(
+                    model, selected, steps, trials, report, model_info=model_info,
+                    decision_instruction=decision_instruction, complete=False))
+    return _report_document(model, selected, steps, trials, report, model_info=model_info,
+                            decision_instruction=decision_instruction, complete=True)
 
 
 def main(argv=None):
@@ -333,22 +404,34 @@ def main(argv=None):
     parser.add_argument("--steps", type=int, default=14)
     parser.add_argument("--trials", type=int, default=1)
     parser.add_argument("--output", default="benchmark-results/real-ollama.json")
+    parser.add_argument("--resume", action="store_true",
+                        help="resume only a compatible, incomplete checkpoint at --output")
     args = parser.parse_args(argv)
     selected = [s.strip() for s in args.scenarios.split(",")]
     if not selected or any(s not in CASES for s in selected) or len(selected) != len(set(selected)):
         parser.error("scenarios must be unique names chosen from note,json,python")
     if not 1 <= args.steps <= 50 or not 1 <= args.trials <= 5:
         parser.error("steps must be 1-50 and trials 1-5")
+    path = Path(args.output)
     try:
+        prior_results = []
+        if path.exists():
+            if not args.resume:
+                raise ValueError("output already exists; use a new path or --resume")
+            prior_results = _resume_results(
+                json.loads(path.read_text(encoding="utf-8")), args.model, selected,
+                args.steps, args.trials)
         model_info = check_model(args.model)
-    except RuntimeError as exc:
+        _atomic_write_report(path, _report_document(
+            args.model, selected, args.steps, args.trials, prior_results,
+            model_info=model_info, complete=False))
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
         print("ERROR:", exc, file=sys.stderr)
         return 2
-    result = benchmark(args.model, selected, args.steps, args.trials)
-    result["model_info"] = model_info
-    path = Path(args.output)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    result = benchmark(args.model, selected, args.steps, args.trials,
+                       results=prior_results, model_info=model_info,
+                       checkpoint=lambda report: _atomic_write_report(path, report))
+    _atomic_write_report(path, result)
     print(f"Results: {result['summary']['passed']}/{result['summary']['total']} "
           f"({result['summary']['success_rate']:.0%}); file={path}")
     # Failing a benchmark task is measured data, not a CLI execution failure.
