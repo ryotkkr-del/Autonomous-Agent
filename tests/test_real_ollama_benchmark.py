@@ -81,6 +81,37 @@ class RealBenchmarkTests(unittest.TestCase):
         self.assertEqual(report["average_steps"], 5)
         self.assertEqual(report["failure_categories"], {"blocked": 1})
 
+    def test_benchmark_checkpoints_each_completed_trial_and_can_resume(self):
+        def fake_case(name, model, steps, decision_instruction=''):
+            return {
+                "scenario": name, "model": model, "passed": True,
+                "steps": steps, "elapsed_seconds": 1.5,
+                "failure_category": "passed",
+            }
+        checkpoints = []
+        with patch.object(real, "run_case", side_effect=fake_case):
+            final = real.benchmark("local-model", ["note", "json"], 3, trials=2,
+                                   model_info={"model_digest": "abc"},
+                                   checkpoint=checkpoints.append)
+        self.assertEqual(len(checkpoints), 4)
+        self.assertFalse(checkpoints[-1]["progress"]["complete"])
+        self.assertEqual(checkpoints[-1]["progress"]["completed_trials"], 4)
+        self.assertTrue(final["progress"]["complete"])
+        self.assertEqual(final["summary"]["total"], 4)
+        resumed = real._resume_results(final, "local-model", ["note", "json"], 3, 2)
+        self.assertEqual(len(resumed), 4)
+        duplicate = dict(final)
+        duplicate["results"] = final["results"] + [dict(final["results"][0])]
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            real._resume_results(duplicate, "local-model", ["note", "json"], 3, 2)
+
+    def test_cli_refuses_existing_output_without_explicit_resume(self):
+        with tempfile.TemporaryDirectory() as d:
+            target = Path(d) / "existing.json"
+            target.write_text("{}", encoding="utf-8")
+            with patch.object(real, "check_model", side_effect=AssertionError("must not check model")):
+                self.assertEqual(real.main(["--output", str(target)]), 2)
+
     def test_model_check_rejects_remote_endpoint_without_network(self):
         with patch.object(agent, "OLLAMA_URL", "https://remote.example/api/chat"), \
              patch.object(real.urllib.request, "build_opener", side_effect=AssertionError("no remote requests")):
