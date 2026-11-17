@@ -51,6 +51,7 @@ MAX_DIAGNOSIS_FAILURE = 4000
 MAX_SEARCH_RESULTS = 5
 REPLAN_EVERY_STEPS = 8
 MAX_STALL_RECOVERIES = 2
+MAX_INITIAL_PLAN_ATTEMPTS = 2
 DIAGNOSIS_SCHEMA = {'type':'object','properties':{'hypotheses':{'type':'array','items':{'type':'object','properties':{'cause':{'type':'string'},'evidence':{'type':'string'},'safe_check':{'type':'string'},'priority':{'type':'integer'}},'required':['cause','evidence','safe_check','priority']}}},'required':['hypotheses']}
 
 RULES = '''あなたはローカル作業エージェント。最小限の操作で目標を達成する。
@@ -542,9 +543,14 @@ def ollama(messages, schema, model):
     if not isinstance(parsed,dict): raise ValueError('Ollama response must be a JSON object')
     return parsed
 
-def make_plan(goal,model):
+def make_plan(goal,model,retry=False):
+    retry_note = (
+        '\n前回の計画は安全な形式ではなかった。ファイル名は `report.md` のような '
+        '相対パスだけにし、`/`、`\\\\`、`:`、`..` は絶対に含めない。JSONだけを返す。'
+        if retry else ''
+    )
     p=ollama([{'role':'system','content':RULES},
-        {'role':'user','content':'次の目標に対し、3〜7個の具体的タスクと成果物の相対ファイルパスをJSONで提案してください。絶対パスは禁止。\n目標:'+goal}],PLAN_SCHEMA,model)
+        {'role':'user','content':'次の目標に対し、3〜7個の具体的タスクと成果物の相対ファイルパスをJSONで提案してください。絶対パスは禁止。\n目標:'+goal+retry_note}],PLAN_SCHEMA,model)
     tasks=p.get('tasks'); outputs=p.get('deliverables')
     if not isinstance(tasks,list) or not 1<=len(tasks)<=12 or not all(isinstance(t,str) and len(t)<350 for t in tasks):
         raise ValueError('invalid plan tasks')
@@ -1373,7 +1379,26 @@ def run(job_id,model,budget=8,codex=False):
         goal=job['goal']; allow_tests=bool(job['allow_tests']); allow_git=bool(job['allow_git']); prefs=db.execute('SELECT allow_search FROM agent_preferences WHERE job_id=?',(job_id,)).fetchone(); allow_search=bool(prefs['allow_search']) if prefs else False; approved_urls={r['url'] for r in db.execute('SELECT url FROM approved_urls WHERE job_id=?',(job_id,))}; update_status(db,job_id,'running','')
         with job_workspace(job):
           try:
-              plan=json.loads(job['plan']) if job['plan'] else make_plan(goal,model)
+              if job['plan']:
+                  plan=json.loads(job['plan'])
+              else:
+                  plan_error=None
+                  for attempt in range(MAX_INITIAL_PLAN_ATTEMPTS):
+                      try:
+                          plan=make_plan(goal,model,retry=attempt>0)
+                          break
+                      except (ValueError,RuntimeError) as exc:
+                          plan_error=exc
+                  else:
+                      # A malformed or unavailable local model must never crash the
+                      # runner. Keep the job resumable and do not persist untrusted
+                      # model output in the event log.
+                      detail='initial plan rejected: '+type(plan_error).__name__
+                      record(db,job_id,{'action':'plan_error','path':'','content':'',
+                                        'reason':'local model plan was rejected'},'ERROR: '+detail)
+                      update_status(db,job_id,'paused',detail)
+                      print('Paused:',detail,flush=True)
+                      return
               if not job['plan']:
                   db.execute('UPDATE jobs SET plan=? WHERE id=?',(json.dumps(plan,ensure_ascii=False),job_id)); db.commit()
                   print('Plan:',json.dumps(plan,ensure_ascii=False))

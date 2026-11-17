@@ -48,6 +48,32 @@ class AgentTests(unittest.TestCase):
         with patch.object(agent,'make_plan',return_value=plan),patch.object(agent,'decide',return_value={'action':'finish','path':'','content':'','reason':'done'}):
             agent.run(job,'dummy',1)
         with agent.connection() as db:self.assertEqual(db.execute('SELECT status FROM jobs').fetchone()['status'],'paused')
+
+    def test_initial_plan_retries_after_malformed_model_output(self):
+        job=agent.make_job('create a note')
+        plan={'tasks':['write a note'],'deliverables':['note.md']}
+        actions=[{'action':'write_file','path':'note.md','content':'hello','reason':''}]
+        with patch.object(agent,'make_plan',side_effect=[ValueError('unsafe path'),plan]) as make_plan, \
+             patch.object(agent,'decide',side_effect=actions):
+            agent.run(job,'dummy',1)
+        self.assertEqual(make_plan.call_count,2)
+        self.assertEqual(make_plan.call_args_list[1].kwargs,{'retry':True})
+        with agent.connection() as db:
+            row=db.execute('SELECT status,plan FROM jobs WHERE id=?',(job,)).fetchone()
+        self.assertEqual(row['status'],'paused')
+        self.assertEqual(__import__('json').loads(row['plan']),plan)
+
+    def test_initial_plan_rejection_pauses_without_crashing(self):
+        job=agent.make_job('create a note')
+        with patch.object(agent,'make_plan',side_effect=ValueError('unsafe path')):
+            agent.run(job,'dummy',1)
+        with agent.connection() as db:
+            row=db.execute('SELECT status,result,plan FROM jobs WHERE id=?',(job,)).fetchone()
+            event=db.execute('SELECT action,result FROM events WHERE job_id=?',(job,)).fetchone()
+        self.assertEqual(row['status'],'paused')
+        self.assertEqual(row['plan'],'')
+        self.assertEqual(row['result'],'initial plan rejected: ValueError')
+        self.assertEqual(tuple(event),('plan_error','ERROR: initial plan rejected: ValueError'))
     def test_stop(self):
         job=agent.make_job('test');(self.root/'STOP').touch()
         with patch.object(agent,'make_plan',return_value={'tasks':['a'],'deliverables':[]}),patch.object(agent,'decide') as d:
