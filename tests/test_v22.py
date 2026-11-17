@@ -41,6 +41,27 @@ class DraftTests(unittest.TestCase):
         self.assertEqual(len(agent.pending_changes(self.job)),1)
         self.assertIn('+after',agent.change_preview(self.job,agent.pending_changes(self.job)[0]['id'])['diff'])
 
+    def test_unchanged_draft_write_is_explicitly_idempotent(self):
+        with agent.connection() as db:
+            job=db.execute('SELECT * FROM jobs WHERE id=?',(self.job,)).fetchone()
+            with agent.job_workspace(job):
+                first=self.action(db,{'action':'write_file','path':'one.md','content':'same','reason':'first'})
+                repeated=self.action(db,{'action':'write_file','path':'one.md','content':'same','reason':'again'})
+        self.assertIn('DRAFT SAVED',first)
+        self.assertIn('DRAFT UNCHANGED',repeated)
+        self.assertEqual(len(agent.pending_changes(self.job)),1)
+        self.assertFalse((self.folder/'one.md').exists())
+
+    def test_decision_prompt_explains_draft_completion(self):
+        captured=[]
+        def fake_ollama(messages,*unused):
+            captured.extend(messages)
+            return {'action':'finish','path':'','content':'','reason':'done'}
+        with patch.object(agent,'ollama',side_effect=fake_ollama):
+            agent.decide('goal',{'tasks':['write'],'deliverables':['one.md']},[],'dummy',draft=True)
+        self.assertIn('DRAFT SAVED',captured[-1]['content'])
+        self.assertIn('必ず finish',captured[-1]['content'])
+
     def test_real_agent_iterates_then_stops_for_batch_review(self):
         plan={'tasks':['write two files'],'deliverables':['one.md','two.md']}
         actions=iter([

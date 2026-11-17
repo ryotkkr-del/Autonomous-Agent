@@ -681,13 +681,18 @@ def show_diagnoses(job_id):
     for r in rows: print(f"Diagnosis #{r['id']} {r['created']}\n"+json.dumps(json.loads(r['proposals']),ensure_ascii=False,indent=2))
 
 
-def decide(goal, plan, history, model, approved_urls=(), allow_git=False, allow_tests=False, repairs=(), board=(), diagnoses=(), allow_search=False):
+def decide(goal, plan, history, model, approved_urls=(), allow_git=False, allow_tests=False, repairs=(), board=(), diagnoses=(), allow_search=False, draft=False):
+    draft_guidance = (
+        '\n仮想ドラフト中: `DRAFT SAVED` はホストへ未書込みの安全な提案である。既に提案したファイルは '
+        'read_file / check_python で確認し、目標を満たせば必ず finish を選ぶ。同じ内容の write_file を繰り返さない。'
+        if draft else ''
+    )
     ask='利用可能なWeb URL（この完全一致のみ）: '+json.dumps(sorted(approved_urls),ensure_ascii=False)+'\nWeb検索許可: '+str(allow_search)+'; Gitチェックポイント許可: '+str(allow_git)+'; テスト実行許可: '+str(allow_tests)+'\n目標: '+goal+'\n計画: '+json.dumps(plan,ensure_ascii=False)+\
         '\n優先度付きタスク一覧（doing / todoを先に取り組む、doneは再実行しない）: '+json.dumps(list(board),ensure_ascii=False)[:2500]+\
         '\n過去の診断仮説（自動実行せず検証する）: '+json.dumps(list(diagnoses)[-2:],ensure_ascii=False)[:2200]+\
         '\n過去の修正実験（同じ失敗を繰り返さない）: '+json.dumps(list(repairs)[-MAX_REPAIR_CONTEXT:],ensure_ascii=False)[:5000]+\
         '\n直近の実行ログ: '+json.dumps(history[-12:],ensure_ascii=False)[:10000]+\
-        '\nテスト失敗時は失敗の原因仮説をreasonに具体的に記し、1つの修正だけ実行し、テストで検証する。同じ仮説が失敗済みなら別の方法を考える。検証していない修正を成功扱いしない。次の操作を1つだけJSONで返す。action, path, content, reasonが必須。'
+        draft_guidance+'\nテスト失敗時は失敗の原因仮説をreasonに具体的に記し、1つの修正だけ実行し、テストで検証する。同じ仮説が失敗済みなら別の方法を考える。検証していない修正を成功扱いしない。次の操作を1つだけJSONで返す。action, path, content, reasonが必須。'
     a=ollama([{'role':'system','content':RULES},{'role':'user','content':ask}],ACTION_SCHEMA,model)
     if a.get('action') not in ('list_files','read_file','write_file','replace_in_file','search_code','web_search','check_python','run_tests','read_url','git_status','git_checkpoint','finish'):
         raise ValueError('invalid action')
@@ -963,6 +968,8 @@ def draft_action(db,job_id,a,allow_tests=False,approved_urls=(),allow_search=Fal
         if not isinstance(content,str) or len(content.encode('utf-8'))>MAX_FILE_BYTES:
             return 'ERROR: draft file too large'
         if existing:
+            if current==content:
+                return 'DRAFT UNCHANGED #'+str(existing['id'])+': '+path+'; inspect it or use finish (not written to host workspace)'
             db.execute("UPDATE pending_changes SET content=?,original_action=?,reason=? WHERE id=?",
                        (content,op,a.get('reason','')[:1000],existing['id']))
             cid=existing['id']
@@ -1426,10 +1433,11 @@ def run(job_id,model,budget=8,codex=False):
                   try:
                       a=decide(goal,plan,h,model,approved_urls,allow_git,allow_tests,
                                repairs=repair_context(db,job_id),board=task_board(db,job_id),allow_search=allow_search,
-                               diagnoses=[json.loads(r['proposals']) for r in db.execute('SELECT proposals FROM diagnoses WHERE job_id=? ORDER BY id DESC LIMIT 2',(job_id,))])
+                               diagnoses=[json.loads(r['proposals']) for r in db.execute('SELECT proposals FROM diagnoses WHERE job_id=? ORDER BY id DESC LIMIT 2',(job_id,))],
+                               draft=draft)
                   except TypeError as exc:
                       # Preserve older integrations with the v0.6 decision signature.
-                      if not any(k in str(exc) for k in ('repairs','board','diagnoses')): raise
+                      if not any(k in str(exc) for k in ('repairs','board','diagnoses','draft')): raise
                       a=decide(goal,plan,h,model,approved_urls,allow_git,allow_tests)
                   # Recheck after long model inference. Access revocation or STOP
                   # must take effect before executing the next external operation.
