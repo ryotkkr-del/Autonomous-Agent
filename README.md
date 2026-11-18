@@ -4,6 +4,21 @@
 
 Windows用のローカル自律AIエージェント。**GitHubの`main`にアプリ本体とGUIを公開済み**です。既存のv1.1以前のコード・SQLiteデータ形式を引き継いでいます。
 
+## 安全・無料優先で使う（推奨）
+
+`safe-new` と `safe-run` は、ローカルOllamaだけを使う最小権限プロファイルです。仮想下書きへの提案以外のホスト書き込み、Web参照・検索、Git、Pythonテスト、Codex直接実行を許可したジョブは**実行を拒否**します。実行は最大4ステップで止まり、差分を人が確認・承認するまで成果物へ反映しません。
+
+```powershell
+python agent.py safe-new "Markdownで今日の作業メモを作る"
+python agent.py safe-run 1 --steps 4
+python agent.py pending 1
+python agent.py batch-preview 1 CHANGE_ID
+# 差分を確認してからだけ実行:
+python agent.py approve-batch 1 CHANGE_ID
+```
+
+このプロファイルは無料・安全優先です。ローカルモデルの品質や速度を保証するものではなく、実行権限を後から広げたジョブは通常の`run`で内容を確認して運用してください。
+
 ## セットアップ（ZIPを毎回ダウンロードする必要はありません）
 
 WindowsにPython 3.11以降、Git for Windows、Ollamaをインストールしてください。
