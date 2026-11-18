@@ -52,6 +52,7 @@ MAX_SEARCH_RESULTS = 5
 REPLAN_EVERY_STEPS = 8
 MAX_STALL_RECOVERIES = 2
 MAX_INITIAL_PLAN_ATTEMPTS = 2
+SAFE_FREE_MAX_STEPS = 4
 DIAGNOSIS_SCHEMA = {'type':'object','properties':{'hypotheses':{'type':'array','items':{'type':'object','properties':{'cause':{'type':'string'},'evidence':{'type':'string'},'safe_check':{'type':'string'},'priority':{'type':'integer'}},'required':['cause','evidence','safe_check','priority']}}},'required':['hypotheses']}
 
 RULES = '''あなたはローカル作業エージェント。最小限の操作で目標を達成する。
@@ -1255,6 +1256,29 @@ def make_job(goal, require_approval=False, draft_mode=False):
                        (job_id,1,int(draft_mode)))
     return job_id
 
+
+def safe_new_job(goal):
+    """Create the least-privilege local-only job used by the safe/free profile."""
+    return make_job(goal, require_approval=True, draft_mode=True)
+
+
+def safe_run(job_id, model=MODEL, steps=SAFE_FREE_MAX_STEPS):
+    """Run only a least-privilege virtual-draft job with a bounded step budget."""
+    if not 1 <= steps <= SAFE_FREE_MAX_STEPS:
+        raise ValueError(f'safe-run steps must be 1-{SAFE_FREE_MAX_STEPS}')
+    with connection() as db:
+        job=db.execute('SELECT id,allow_tests,allow_git FROM jobs WHERE id=?',(job_id,)).fetchone()
+        if not job:
+            raise ValueError('unknown job')
+        gate=db.execute('SELECT approval_required,draft_mode FROM job_controls WHERE job_id=?',(job_id,)).fetchone()
+        prefs=db.execute('SELECT allow_search FROM agent_preferences WHERE job_id=?',(job_id,)).fetchone()
+        url_count=db.execute('SELECT COUNT(*) FROM approved_urls WHERE job_id=?',(job_id,)).fetchone()[0]
+        if not gate or not gate['approval_required'] or not gate['draft_mode']:
+            raise ValueError('safe-run requires a protected virtual-draft job; create one with safe-new')
+        if job['allow_tests'] or job['allow_git'] or (prefs and prefs['allow_search']) or url_count:
+            raise ValueError('safe-run requires tests, Git, search and approved URLs to remain disabled')
+    run(job_id,model,steps,codex=False)
+
 @contextmanager
 def job_workspace(job):
     """New jobs are isolated. Old v0.3 jobs retain their original workspace."""
@@ -1735,6 +1759,8 @@ def main():
     parser=argparse.ArgumentParser(description='Autonomous Agent v2.6 — hardened network, workspace and Git controls')
     sub=parser.add_subparsers(dest='command',required=True)
     n=sub.add_parser('new');n.add_argument('goal')
+    safe_new=sub.add_parser('safe-new',help='create a local-only protected virtual-draft job')
+    safe_new.add_argument('goal')
     for command in ('protect-job','pending'):
         p=sub.add_parser(command);p.add_argument('job_id',type=int)
     p=sub.add_parser('enable-draft');p.add_argument('job_id',type=int)
@@ -1746,6 +1772,10 @@ def main():
     p=sub.add_parser('rollback');p.add_argument('job_id',type=int);p.add_argument('snapshot_id',type=int)
     r=sub.add_parser('run');r.add_argument('job_id',type=int);r.add_argument('--steps',type=int,default=8)
     r.add_argument('--model',default=MODEL);r.add_argument('--codex',action='store_true',help='show Codex hint; never runs automatically')
+    safe_run_parser=sub.add_parser('safe-run',help='run only the least-privilege safe/free profile')
+    safe_run_parser.add_argument('job_id',type=int)
+    safe_run_parser.add_argument('--steps',type=int,default=SAFE_FREE_MAX_STEPS)
+    safe_run_parser.add_argument('--model',default=MODEL)
     c=sub.add_parser('codex');c.add_argument('job_id',type=int);c.add_argument('--confirm',action='store_true')
     for name in ('allow-tests','deny-tests','allow-git','deny-git','allow-search','deny-search','unblock','chat-report'):
         x=sub.add_parser(name);x.add_argument('job_id',type=int)
@@ -1784,7 +1814,9 @@ def main():
     sub.add_parser('status');sub.add_parser('doctor');sub.add_parser('stop');sub.add_parser('clear-stop')
     a=parser.parse_args();ensure_workspace()
     if a.command=='new': print('Created job #',make_job(a.goal,require_approval=True,draft_mode=True))
+    elif a.command=='safe-new': print('Created safe/free job #',safe_new_job(a.goal))
     elif a.command=='run': run(a.job_id,a.model,a.steps,a.codex)
+    elif a.command=='safe-run': safe_run(a.job_id,a.model,a.steps)
     elif a.command=='protect-job': protect_job(a.job_id)
     elif a.command=='enable-draft': enable_draft(a.job_id)
     elif a.command=='pending': print(json.dumps(pending_changes(a.job_id),ensure_ascii=False,indent=2))
