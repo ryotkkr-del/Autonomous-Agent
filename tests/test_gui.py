@@ -15,6 +15,7 @@ class DesktopHelpersTest(unittest.TestCase):
 
     def test_extract_created_job(self):
         self.assertEqual(extract_job_id('Created job # 17\n'),17)
+        self.assertEqual(extract_job_id('Created safe/free job # 18\n'),18)
         with self.assertRaises(ValueError):extract_job_id('ERROR')
 
     def test_read_only_job_listing(self):
