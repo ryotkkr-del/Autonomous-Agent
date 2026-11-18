@@ -74,7 +74,7 @@ def validate_goal(value):
 
 
 def extract_job_id(output):
-    match = re.search(r'Created job #\s*(\d+)', output)
+    match = re.search(r'Created (?:safe/free )?job #\s*(\d+)', output)
     if not match:
         raise ValueError('ジョブ番号を取得できませんでした')
     return int(match.group(1))
@@ -203,6 +203,7 @@ class DesktopApp:
         ttk.Entry(line, textvariable=self.goal, font=('Yu Gothic UI', 11)).pack(side='left', fill='x', expand=True, padx=(0, 8))
         self.create_btn = ttk.Button(line, text='目標を登録', command=self.create_goal)
         self.create_btn.pack(side='right')
+        ttk.Button(line, text='安全・無料で登録', command=self.create_safe_goal).pack(side='right', padx=(0, 8))
         ttk.Label(outer, text='ジョブ一覧', font=('Yu Gothic UI', 11, 'bold')).pack(anchor='w', pady=(7, 3))
         list_frame = ttk.Frame(outer); list_frame.pack(fill='both', expand=True)
         self.tree = ttk.Treeview(list_frame, columns=('id','status','steps','goal'), show='headings', height=6, selectmode='browse')
@@ -224,6 +225,7 @@ class DesktopApp:
         actions = ttk.Frame(outer); actions.pack(fill='x', pady=(3, 8))
         self.start_btn=ttk.Button(actions,text='▶ 開始 / 再開',command=self.run_job)
         self.start_btn.pack(side='left',padx=(0,7))
+        ttk.Button(actions,text='🛡 安全・無料で実行',command=self.safe_run_job).pack(side='left',padx=(0,7))
         ttk.Button(actions,text='■ 一時停止',command=self.pause).pack(side='left',padx=(0,7))
         ttk.Button(actions,text='更新',command=self.refresh).pack(side='left',padx=(0,7))
         ttk.Button(actions,text='成果物を開く',command=self.open_folder).pack(side='left',padx=(0,7))
@@ -256,7 +258,7 @@ class DesktopApp:
         ttk.Label(info,textvariable=self.status_label).pack(side='right')
         self.log=tk.Text(outer,height=10,wrap='word',font=('Consolas',10),state='disabled',bg='white')
         self.log.pack(fill='both',expand=True,pady=(4,5))
-        helptext='初回は Ollama を起動し、ollama pull gemma3:4b を実行してください。Codex はこの画面から自動起動しません。'
+        helptext='「安全・無料」はローカルOllamaのみ・最大4操作・承認前の書込み/Web/Git/テスト/Codexなしで実行します。'
         ttk.Label(outer,text=helptext,wraplength=840).pack(anchor='w')
         bottom=ttk.Frame(outer);bottom.pack(fill='x',pady=(5,0))
         ttk.Button(bottom,text='接続・環境を確認',command=lambda:self.launch(['doctor'],'接続確認')).pack(side='left',padx=(0,8))
@@ -414,6 +416,11 @@ class DesktopApp:
         except ValueError as exc:messagebox.showwarning('目標を確認',str(exc));return
         self.launch(['new',goal],'新しい目標を登録',on_success=self._created)
 
+    def create_safe_goal(self):
+        try:goal=validate_goal(self.goal.get())
+        except ValueError as exc:messagebox.showwarning('目標を確認',str(exc));return
+        self.launch(['safe-new',goal],'安全・無料の目標を登録',on_success=self._created)
+
     def _created(self,output):
         number=extract_job_id(output)
         self.goal.set('')
@@ -438,6 +445,29 @@ class DesktopApp:
             return
         STOP.unlink(missing_ok=True)
         self.launch(['run',str(job_id),'--steps',str(steps)],f'ジョブ#{job_id} を実行')
+
+    def safe_run_job(self):
+        """Run the CLI-enforced least-privilege profile from the GUI."""
+        job_id=self._current_job()
+        if job_id is None:return
+        job=self.jobs[str(job_id)]
+        if job['status']=='done':
+            messagebox.showinfo('完了','このジョブは完了しています。別の目標を登録してください。');return
+        if job['status']=='awaiting_approval':
+            messagebox.showinfo('変更の確認が必要','変更案を確認・承認 から内容を確認してください。');return
+        if job['status']=='blocked':
+            messagebox.showwarning('要確認','このジョブは停止条件に達しています。履歴を確認して解除してください。');return
+        try:steps=int(self.steps.get())
+        except (ValueError,tk.TclError):steps=4
+        if not 1 <= steps <= 30:
+            messagebox.showwarning('ステップ数','1〜30を指定してください');return
+        safe_steps=min(steps,4)
+        if self.proc is not None and self.proc.poll() is None:
+            messagebox.showinfo('実行中','先に実行中の処理を終了してください。');return
+        if safe_steps != steps:
+            messagebox.showinfo('安全・無料モード','安全のため1回の実行は最大4操作に制限します。')
+        STOP.unlink(missing_ok=True)
+        self.launch(['safe-run',str(job_id),'--steps',str(safe_steps)],f'安全・無料でジョブ#{job_id} を実行')
 
     def pause(self):
         # STOP is checked between actions. Does not forcibly terminate an action.

@@ -55,6 +55,8 @@ class InterfaceSafetyTests(unittest.TestCase):
         self.assertTrue(callable(gui.DesktopApp.set_success_criteria))
         self.assertTrue(callable(gui.DesktopApp.view_success_criteria))
         self.assertTrue(callable(gui.DesktopApp.view_safety))
+        self.assertTrue(callable(gui.DesktopApp.create_safe_goal))
+        self.assertTrue(callable(gui.DesktopApp.safe_run_job))
 
 
 if __name__=='__main__':
